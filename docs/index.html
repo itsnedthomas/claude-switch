@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Switch: every Claude plan in your menu bar</title>
+<meta name="description" content="A free, open-source macOS menu bar app for people on more than one Claude plan. See every account's limits, switch the live login in one click, and let it switch and start your 5-hour windows for you.">
+<meta property="og:title" content="Claude Switch">
+<meta property="og:description" content="Every Claude plan in your menu bar. Switch the live login in one click.">
+<meta property="og:image" content="media/accounts.png">
+<link rel="icon" href="media/icon-256.png">
+<style>
+  :root {
+    --ink: #252731; --muted: #5b5d64; --subtle: #888a93; --line: #dee3e8; --soft: #eaedf1;
+    --sunken: #f6f7f9; --accent: #348cff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(900px 520px at 50% 0%, rgba(52, 140, 255, .12), transparent 70%),
+      linear-gradient(to right, rgba(0,0,0,.035) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(to bottom, rgba(0,0,0,.035) 1px, transparent 1px) 0 0 / 32px 32px,
+      #fff;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  a { color: inherit; }
+  .hero { text-align: center; padding: 88px 0 40px; }
+  .hero img.icon { width: 96px; height: 96px; }
+  h1 { font-size: 52px; line-height: 1.05; letter-spacing: -.02em; margin: 20px 0 14px; font-weight: 650; }
+  .lede { font-size: 20px; color: var(--muted); max-width: 640px; margin: 0 auto; }
+  .actions { display: flex; gap: 10px; justify-content: center; margin-top: 28px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px;
+    font-weight: 560; font-size: 15px; text-decoration: none; border: 1px solid var(--line); background: #fff;
+    transition: border-color .18s, color .18s, background .18s, transform .1s;
+  }
+  .btn:hover { border-color: rgba(52,140,255,.5); color: var(--accent); background: rgba(52,140,255,.05); }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.primary:hover { background: #000; color: #fff; }
+  .note { color: var(--subtle); font-size: 13px; margin-top: 12px; }
+  .stage {
+    margin: 36px auto 0; max-width: 640px; border-radius: 18px; overflow: hidden;
+    border: 1px solid var(--line); box-shadow: 0 30px 80px -30px rgba(20, 40, 80, .35); background: #fff;
+  }
+  .stage video { display: block; width: 100%; height: auto; }
+  section { padding: 72px 0 0; }
+  h2 { font-size: 30px; letter-spacing: -.01em; font-weight: 640; margin-bottom: 8px; text-align: center; }
+  .sub { text-align: center; color: var(--muted); max-width: 600px; margin: 0 auto 32px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .card img { display: block; width: 100%; height: 340px; object-fit: cover; object-position: top; background: #fff; border-bottom: 1px solid var(--soft); }
+  .card div { padding: 18px 20px 22px; }
+  .card h3 { font-size: 17px; font-weight: 620; margin-bottom: 6px; }
+  .card p { color: var(--muted); font-size: 15px; }
+  .menubar { display: flex; align-items: center; gap: 28px; justify-content: center; flex-wrap: wrap; }
+  .menubar video { width: 360px; max-width: 100%; border-radius: 14px; border: 1px solid var(--line); }
+  .menubar p { max-width: 380px; color: var(--muted); }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .step b { display: block; margin-bottom: 4px; }
+  .step span { color: var(--muted); font-size: 15px; }
+  pre {
+    background: var(--ink); color: #e9ebf0; border-radius: 12px; padding: 18px 20px; overflow-x: auto;
+    font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 640px; margin: 0 auto;
+  }
+  footer { text-align: center; color: var(--subtle); font-size: 13px; padding: 72px 24px 48px; }
+  @media (max-width: 760px) {
+    h1 { font-size: 38px; }
+    .grid, .steps { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img class="icon" src="media/icon-256.png" alt="">
+    <h1>Every Claude plan,<br>in your menu bar.</h1>
+    <p class="lede">See every account's limits, switch the live login in one click, and let it switch and start your 5-hour windows for you. Free and open source.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/itsnedthomas/claude-switch/releases/latest">Download for macOS</a>
+      <a class="btn" href="https://github.com/itsnedthomas/claude-switch">View on GitHub</a>
+    </div>
+    <p class="note">macOS 14 or later · works with Claude Code</p>
+    <div class="stage">
+      <video src="media/tour.mp4" poster="media/accounts.png" autoplay muted loop playsinline></video>
+    </div>
+  </div>
+
+  <section>
+    <h2>One click, every session</h2>
+    <p class="sub">Claude Switch swaps which account Claude Code uses, for every terminal, IDE and agent on your Mac at once. No logging out, no browser.</p>
+    <div class="grid">
+      <div class="card">
+        <img src="media/accounts-panel.png" alt="Accounts">
+        <div><h3>Accounts</h3><p>Each account's 5-hour and weekly limits. Blue, orange when it's running close, red when it's on course to run out. Hover for the reset time and when it runs out at this pace.</p></div>
+      </div>
+      <div class="card">
+        <img src="media/usage-panel.png" alt="Usage">
+        <div><h3>Usage</h3><p>Every plan's weekly limit against an even pace, projected to the reset. Your spend at API prices, by the hour, from Claude Code's own logs on your Mac.</p></div>
+      </div>
+      <div class="card">
+        <img src="media/schedule-panel.png" alt="Schedule">
+        <div><h3>Schedule</h3><p>Set your working hours. It staggers each account's 5-hour windows across the day and can start each one on time, so a fresh window is always close.</p></div>
+      </div>
+      <div class="card">
+        <img src="media/settings-panel.png" alt="Settings">
+        <div><h3>Auto-switch</h3><p>Leave an account at the 5-hour or weekly limit you choose, and go back to your default a few minutes after its window resets. With notifications.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="menubar">
+      <video src="media/menubar.mp4" autoplay muted loop playsinline></video>
+      <p>The menu bar shows the live account's picture, its 5-hour and weekly bars and its 5-hour %. On a switch the bars slide and the number counts to the new account.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <p class="sub">Everything stays on your Mac. Logins live in your Keychain; the only network calls go to Anthropic.</p>
+    <div class="steps">
+      <div class="step"><b>One login slot</b><span>Claude Code reads its login from one Keychain item. Claude Switch keeps each account's login and swaps which one is in it.</span></div>
+      <div class="step"><b>Live in seconds</b><span>Running sessions re-read the login about every 30 seconds, so they move over mid-task.</span></div>
+      <div class="step"><b>Usage, read locally</b><span>Limits from the same source as Claude Code's /usage; activity from the transcripts already on your disk.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Install</h2>
+    <p class="sub">Download the app from Releases (right-click → Open the first time), or build it yourself:</p>
+    <pre>git clone https://github.com/itsnedthomas/claude-switch.git
+cd claude-switch
+./build.sh --install</pre>
+  </section>
+</main>
+<footer>
+  MIT licensed · Not affiliated with or endorsed by Anthropic. “Claude” is a trademark of Anthropic.<br>
+  <a href="https://github.com/itsnedthomas/claude-switch">github.com/itsnedthomas/claude-switch</a>
+</footer>
+</body>
+</html>
