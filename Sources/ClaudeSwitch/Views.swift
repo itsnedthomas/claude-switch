@@ -627,29 +627,20 @@ struct WeekCard: View {
                         Chip(text: "\(Int((-over).rounded()))% under pace", tone: .success)
                     }
                 }
-                chart
-                    .frame(height: 120)
-                    .padding(.top, 6)
-                    .mask(alignment: .leading) {
-                        GeometryReader { g in Rectangle().frame(width: g.size.width * appear(shown, delay: 0.15, duration: 0.9)) }
-                    }
-                if f.count > 1 || !f.extras.isEmpty {
-                    Flow {
-                        if combined {
-                            HStack(spacing: 4) {
-                                Circle().fill(Theme.accent).frame(width: 6, height: 6)
-                                Text("Combined \(Int(f.current.rounded()))%").foregroundStyle(Theme.muted)
-                            }
-                        } else {
-                            ForEach(f.plans + f.extras) { p in
-                                HStack(spacing: 4) {
-                                    Circle().fill(colors[p.id] ?? Theme.accent).frame(width: 6, height: 6)
-                                    Text("\(p.label) \(Int(p.current.rounded()))%").foregroundStyle(Theme.muted)
-                                }
-                            }
+                if combined || f.plans.count + f.extras.count == 1 {
+                    chart
+                        .frame(height: 120)
+                        .padding(.top, 6)
+                        .mask(alignment: .leading) {
+                            GeometryReader { g in Rectangle().frame(width: g.size.width * appear(shown, delay: 0.15, duration: 0.9)) }
+                        }
+                } else {
+                    VStack(spacing: 9) {
+                        ForEach(f.plans + f.extras) { p in
+                            WeekRow(plan: p, color: colors[p.id] ?? Theme.accent, shown: shown)
                         }
                     }
-                    .font(Theme.micro)
+                    .padding(.top, 2)
                 }
                 readout(firstOut: firstOut).font(Theme.micro).lineLimit(1)
             }
@@ -765,6 +756,58 @@ struct WeekCard: View {
                     }
             }
         }
+    }
+}
+
+/// One plan's week as a bar: used so far, where it's heading by its reset, and a
+/// tick where even pacing would have it now.
+struct WeekRow: View {
+    let plan: WeekForecast.Plan
+    let color: Color
+    let shown: Bool
+
+    /// "18:40" today, "Sun 11:08" otherwise.
+    static func short(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "EEE HH:mm"
+        return f.string(from: d)
+    }
+
+    var body: some View {
+        let now = Date()
+        let pace = min(1, max(0, now.timeIntervalSince(plan.start) / WeekForecast.week))
+        let used = min(plan.current, 100) / 100
+        let ahead = min(plan.atReset, 100) / 100
+        HStack(spacing: 10) {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(plan.label).foregroundStyle(Theme.ink).lineLimit(1).truncationMode(.tail)
+            }
+            .frame(width: 92, alignment: .leading)
+            GeometryReader { g in
+                let w = g.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.lineSoft)
+                    Capsule().fill(color.opacity(0.25)).frame(width: w * ahead * appear(shown, delay: 0.1, duration: 0.8))
+                    Capsule().fill(color).frame(width: max(w * used, used > 0 ? 4 : 0) * appear(shown, delay: 0.1, duration: 0.8))
+                    Rectangle().fill(Theme.ink.opacity(0.55)).frame(width: 1.5, height: 12).offset(x: w * pace - 0.75)
+                }
+                .frame(height: 6)
+                .frame(maxHeight: .infinity)
+            }
+            .frame(height: 14)
+            Group {
+                if let out = plan.runsOut {
+                    Text("out \(Self.short(out))").foregroundStyle(toneColor(.out))
+                } else {
+                    Text("\(Int(plan.current.rounded()))% → \(Int(plan.atReset.rounded()))%").foregroundStyle(Theme.muted)
+                }
+            }
+            .monospacedDigit().lineLimit(1)
+            .frame(width: 96, alignment: .trailing)
+        }
+        .font(Theme.micro)
+        .help("\(plan.label): \(Int(plan.current.rounded()))% used, \(plan.runsOut.map { "runs out \(fullDate($0)) at this pace, " } ?? "")resets \(fullDate(plan.reset)). The tick is where even pacing would be now.")
     }
 }
 
