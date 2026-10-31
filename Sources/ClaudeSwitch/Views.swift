@@ -431,8 +431,7 @@ struct ProviderRow: View {
                 Avatar(id: provider.id, label: provider.label)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
-                    let sub = [provider.label == provider.email ? "" : provider.email, provider.plan].filter { !$0.isEmpty }
-                    if !sub.isEmpty { Text(sub.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
+                    if !provider.plan.isEmpty { Text(provider.plan).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
                 }
                 Spacer()
             }
