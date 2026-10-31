@@ -39,7 +39,7 @@ If you use Claude Code all day on two or more Max (or Pro) plans, you hit the we
 </td>
 <td>
 
-**Usage.** Every plan's weekly limit on one chart, each on its own clock (plans added on different days reset on different days), projected to its reset, with your Grok Bot and ChatGPT weekly limits beside them. Flip **Each / Combined** to see one line for all your Claude plans together. It tells you which plan runs out first and whether, moving between them, you'd run out of all of them before one resets. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
+**Usage.** Every plan's week as its own bar, on its own clock (plans added on different days reset on different days): what's used, where it's heading by its reset, and a tick where even pacing would have it now, with your Grok Bot and ChatGPT weekly limits beside them. Flip to **Combined** for one line chart of all your Claude plans together. It tells you which plan runs out first and whether, moving between them, you'd run out of all of them before one resets. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
 
 </td>
 </tr>
