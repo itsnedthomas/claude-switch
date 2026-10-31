@@ -141,13 +141,14 @@ enum Providers {
             let w = ProviderWindow(title: "Monthly", icon: "calendar",
                                    window: Window(percent: min(max(pct ?? 0, 0), 100), resetsAt: end),
                                    length: length, note: note)
+            // An X Subscription's weekly pool is the limit that bites, so it replaces the monthly bar.
             let pool = await shared
-            return ProviderUsage(windows: [w] + (pool.map { [$0.window] } ?? []),
+            return ProviderUsage(windows: [pool?.window ?? w],
                                  plan: pool?.plan ?? (j["membershipType"] as? String).map(capitalised), fetchedAt: Date())
         }
 
         /// The weekly allowance an X Subscription shares between Cursor, Grok and Grok
-        /// Bot, when the account has one. Best effort: a failure leaves the monthly bar.
+        /// Bot, when the account has one. Best effort: without it the monthly bar shows.
         static func pool(_ l: ProviderLogin) async -> (window: ProviderWindow, plan: String?)? {
             var req = URLRequest(url: poolURL, timeoutInterval: 15)
             req.httpMethod = "POST"
@@ -159,9 +160,9 @@ enum Providers {
             }
             guard let j = try? await fetch(req, signedOut: signedOut),
                   j["hasNonZeroIncludedLimit"] as? Bool == true, let pct = num(j["usagePercent"]) else { return nil }
-            let w = ProviderWindow(title: "Shared weekly", icon: "calendar",
+            let w = ProviderWindow(title: "Weekly", icon: "calendar",
                                    window: Window(percent: min(max(pct, 0), 100), resetsAt: (j["nextResetTimestampUtc"] as? String).flatMap(parseISO)),
-                                   length: 7 * 86400, note: "Shared with Grok")
+                                   length: 7 * 86400, note: nil)
             return (w, (j["cursorPlanName"] as? String).map(capitalised))
         }
     }

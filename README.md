@@ -34,7 +34,7 @@ If you use Claude Code all day on two or more Max (or Pro) plans, you hit the we
 <tr>
 <td>
 
-**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also sign in Cursor accounts (monthly usage, plus the weekly allowance an X Subscription shares with Grok) and Codex accounts (its 5-hour and weekly limits), as many of each as you like, each tool in a card of its own; they only show once you add one.
+**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also sign in Cursor accounts (the weekly allowance an X Subscription shares with Grok, or monthly usage without one) and Codex accounts (its 5-hour and weekly limits), as many of each as you like, each tool in a card of its own; they only show once you add one.
 
 </td>
 <td>

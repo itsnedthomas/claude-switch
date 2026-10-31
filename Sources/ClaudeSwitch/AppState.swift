@@ -221,8 +221,8 @@ final class AppState: ObservableObject {
         providers = [ProviderAccount(id: "demo-cursor", kind: .cursor, email: "you@company.com", label: "Work", plan: "Pro"),
                      ProviderAccount(id: "demo-codex", kind: .codex, email: "you@personal.dev", label: "Personal", plan: "Plus")]
         providerUsage = [
-            "demo-cursor": ProviderUsage(windows: [ProviderWindow(title: "Monthly", icon: "calendar",
-                                                             window: Window(percent: 37, resetsAt: now.addingTimeInterval(19 * 86_400)), length: 30 * 86_400, note: nil)],
+            "demo-cursor": ProviderUsage(windows: [ProviderWindow(title: "Weekly", icon: "calendar",
+                                                             window: Window(percent: 31, resetsAt: now.addingTimeInterval(3 * 86_400)), length: 7 * 86_400, note: nil)],
                                     plan: "Pro", fetchedAt: now),
             "demo-codex": ProviderUsage(windows: [ProviderWindow(title: "5-hour", icon: "clock", window: Window(percent: 22, resetsAt: now.addingTimeInterval(3 * 3600)), length: 5 * 3600, note: nil),
                                              ProviderWindow(title: "Weekly", icon: "calendar", window: Window(percent: 48, resetsAt: now.addingTimeInterval(4 * 86_400)), length: 7 * 86_400, note: nil)],
