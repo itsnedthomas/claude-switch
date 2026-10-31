@@ -7,11 +7,11 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var name: String {
         switch self {
-        case .cursor: return "Cursor"
-        case .codex: return "Codex"
+        case .cursor: return "Grok Bot"   // its X Subscription allowance is shared by Cursor, Grok and Grok Bot
+        case .codex: return "ChatGPT"
         }
     }
-    var brand: Brand { self == .cursor ? .cursor : .codex }
+    var brand: Brand { self == .cursor ? .grokBot : .codex }
 }
 
 /// A Cursor or Codex account signed in through Claude Switch. Its login lives in
@@ -249,4 +249,9 @@ enum Providers {
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: s)
     }
+}
+
+extension ProviderUsage {
+    /// The weekly window, when the tool has one.
+    var weekly: ProviderWindow? { windows.first { abs($0.length - 7 * 86_400) < 3600 } }
 }

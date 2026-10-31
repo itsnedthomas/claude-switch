@@ -36,8 +36,48 @@ func hhmm(_ minutes: Int) -> String {
 
 /// Each account's colour in the usage chart, in list order.
 func accountColor(_ index: Int) -> Color {
-    [Theme.accent, Color(red: 0.56, green: 0.42, blue: 0.94), Color(red: 0.07, green: 0.65, blue: 0.58),
-     Color(red: 0.91, green: 0.24, blue: 0.51)][index % 4]
+    let all = [Theme.accent, Color(red: 0.56, green: 0.42, blue: 0.94), Color(red: 0.07, green: 0.65, blue: 0.58),
+               Color(red: 0.91, green: 0.24, blue: 0.51), Color(red: 0.95, green: 0.58, blue: 0.13),
+               Color(red: 0.35, green: 0.70, blue: 0.95), Color(red: 0.55, green: 0.55, blue: 0.60)]
+    return all[index % all.count]
+}
+
+/// Lays its children out in rows, wrapping to a new row when one is full.
+struct Flow: Layout {
+    var spacing: CGFloat = 10
+    var lineSpacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(width: proposal.width ?? .infinity, subviews)
+        let h = rows.map(\.height).reduce(0, +) + lineSpacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: h)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(width: bounds.width, subviews) {
+            var x = bounds.minX
+            for i in row.items {
+                let size = subviews[i].sizeThatFits(.unspecified)
+                subviews[i].place(at: CGPoint(x: x, y: y), proposal: .unspecified)
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private func rows(width: CGFloat, _ subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
+        for (i, v) in subviews.enumerated() {
+            let size = v.sizeThatFits(.unspecified)
+            if let last = rows.last, last.width + spacing + size.width <= width {
+                rows[rows.count - 1] = (last.items + [i], last.width + spacing + size.width, max(last.height, size.height))
+            } else {
+                rows.append(([i], size.width, size.height))
+            }
+        }
+        return rows
+    }
 }
 
 func toneColor(_ t: Outlook.Tone) -> Color {
@@ -431,8 +471,7 @@ struct ProviderRow: View {
                 Avatar(id: provider.id, label: provider.label)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
-                    let sub = [provider.label == provider.email ? "" : provider.email, provider.plan].filter { !$0.isEmpty }
-                    if !sub.isEmpty { Text(sub.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
+                    if !provider.plan.isEmpty { Text(provider.plan).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
                 }
                 Spacer()
             }
@@ -539,8 +578,10 @@ struct UsageTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let f = WeekForecast.make(accounts: state.accounts.map { ($0.id, $0.label) }, usage: state.usage, samples: state.samples) {
-                WeekCard(f: f, colors: Dictionary(uniqueKeysWithValues: state.accounts.enumerated().map { ($1.id, accountColor($0)) }))
+            if let f = WeekForecast.make(accounts: state.accounts.map { ($0.id, $0.label) }, usage: state.usage, samples: state.samples,
+                                         others: state.weeklyTools) {
+                let ids = state.accounts.map(\.id) + f.extras.map(\.id)
+                WeekCard(f: f, colors: Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, accountColor($0)) }))
             } else {
                 Text(state.usage.isEmpty ? "Waiting for usage…" : "No plan has started its week yet. It starts when you next use it.")
                     .font(Theme.caption).foregroundStyle(Theme.muted)
@@ -553,22 +594,31 @@ struct UsageTab: View {
 /// Every plan's week on one chart: each plan's line in its own colour from its own
 /// week's start, dashed on to its own reset at its pace so far. The line under it
 /// says whether, moving between plans, you'd run out before one resets.
+enum WeekView: String, CaseIterable { case each = "Each", combined = "Combined" }
+
 struct WeekCard: View {
     let f: WeekForecast
     let colors: [String: Color]
+    @AppStorage("weekView") private var view: WeekView = .each
     @State private var hoverDate: Date?
     @State private var shown = !animateIn
 
     private var single: Bool { f.plans.count == 1 && f.count == 1 }
+    private var combined: Bool { view == .combined && f.count > 1 }
 
     var body: some View {
         let over = f.current - f.shouldBe
         let firstOut = f.plans.filter { $0.runsOut != nil }.min { $0.runsOut! < $1.runsOut! }
         Box {
             VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("This week").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
+                    Spacer()
+                    if f.count > 1 { MiniSwitch(selection: $view) }
+                }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("\(Int(f.current.rounded()))%").font(.system(size: 22, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
-                    Text(f.count > 2 ? "of your \(f.count) plans this week" : f.count == 2 ? "of both plans this week" : "of your plan this week")
+                    Text(f.count > 2 ? "of your \(f.count) Claude plans" : f.count == 2 ? "of both Claude plans" : "of your Claude plan")
                         .font(Theme.caption).foregroundStyle(Theme.muted)
                     Spacer()
                     if over > 0 {
@@ -583,16 +633,23 @@ struct WeekCard: View {
                     .mask(alignment: .leading) {
                         GeometryReader { g in Rectangle().frame(width: g.size.width * appear(shown, delay: 0.15, duration: 0.9)) }
                     }
-                if f.plans.count > 1 {
-                    HStack(spacing: 10) {
-                        ForEach(f.plans) { p in
+                if f.count > 1 || !f.extras.isEmpty {
+                    Flow {
+                        if combined {
                             HStack(spacing: 4) {
-                                Circle().fill(colors[p.id] ?? Theme.accent).frame(width: 6, height: 6)
-                                Text("\(p.label) \(Int(p.current.rounded()))%").foregroundStyle(Theme.muted)
+                                Circle().fill(Theme.accent).frame(width: 6, height: 6)
+                                Text("Combined \(Int(f.current.rounded()))%").foregroundStyle(Theme.muted)
+                            }
+                        } else {
+                            ForEach(f.plans + f.extras) { p in
+                                HStack(spacing: 4) {
+                                    Circle().fill(colors[p.id] ?? Theme.accent).frame(width: 6, height: 6)
+                                    Text("\(p.label) \(Int(p.current.rounded()))%").foregroundStyle(Theme.muted)
+                                }
                             }
                         }
                     }
-                    .font(Theme.micro).lineLimit(1)
+                    .font(Theme.micro)
                 }
                 readout(firstOut: firstOut).font(Theme.micro).lineLimit(1)
             }
@@ -603,12 +660,15 @@ struct WeekCard: View {
 
     @ViewBuilder private func readout(firstOut: WeekForecast.Plan?) -> some View {
         if let d = hoverDate {
-            if single, let p = f.plans.first, let v = p.value(at: d) {
+            if combined {
+                Text("\(fullDate(d)) · \(d > Date() ? "on course for" : "used") \(Int(f.combined(at: d).rounded()))% combined")
+                    .foregroundStyle(Theme.ink)
+            } else if single, let p = f.plans.first, let v = p.value(at: d) {
                 let pace = min(100, d.timeIntervalSince(p.start) / WeekForecast.week * 100)
                 Text("\(fullDate(d)) · \(d > Date() ? "on course for" : "used") \(Int(v.rounded()))% · even pace \(Int(pace.rounded()))%")
                     .foregroundStyle(Theme.ink)
             } else {
-                let parts = f.plans.compactMap { p in p.value(at: d).map { "\(p.label) \(Int($0.rounded()))%" } }
+                let parts = (f.plans + f.extras).compactMap { p in p.value(at: d).map { "\(p.label) \(Int($0.rounded()))%" } }
                 Text(([fullDate(d)] + parts).joined(separator: " · ")).foregroundStyle(Theme.ink)
             }
         } else if let out = f.poolRunsOut {
@@ -636,7 +696,23 @@ struct WeekCard: View {
                 LineMark(x: .value("t", p.reset), y: .value("%", 100), series: .value("s", "pace"))
                     .foregroundStyle(Theme.subtle.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
-            ForEach(f.plans) { p in
+            if combined {
+                let series = f.combinedSeries(now: now)
+                ForEach(Array(series.actual.enumerated()), id: \.offset) { _, pt in
+                    AreaMark(x: .value("t", pt.0), y: .value("%", pt.1)).foregroundStyle(Theme.accent.opacity(0.1))
+                    LineMark(x: .value("t", pt.0), y: .value("%", pt.1), series: .value("s", "combined"))
+                        .foregroundStyle(Theme.accent).lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(series.ahead.enumerated()), id: \.offset) { _, pt in
+                    LineMark(x: .value("t", pt.0), y: .value("%", pt.1), series: .value("s", "combined-ahead"))
+                        .foregroundStyle(Theme.accent.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                }
+                PointMark(x: .value("t", now), y: .value("%", f.current)).foregroundStyle(Theme.accent).symbolSize(24)
+                if let d = hoverDate {
+                    PointMark(x: .value("t", d), y: .value("%", f.combined(at: d))).foregroundStyle(Theme.ink).symbolSize(22)
+                }
+            }
+            ForEach(combined ? [] : f.plans + f.extras) { p in
                 let color = colors[p.id] ?? Theme.accent
                 let end: (Date, Double) = p.runsOut.map { ($0, 100) } ?? (p.reset, min(p.atReset, 100))
                 ForEach(Array(p.actual.enumerated()), id: \.offset) { _, pt in
@@ -880,6 +956,14 @@ struct MiniSwitch<T: RawRepresentable & CaseIterable & Hashable>: View where T.R
 struct SettingsTab: View {
     @EnvironmentObject var state: AppState
 
+    private var menuBarChoice: String {
+        let id = state.menuBarSource
+        if id == "combined" { return "All Claude plans" }
+        if let a = state.account(id) { return a.label }
+        if let p = state.providers.first(where: { $0.id == id }) { return "\(p.kind.name): \(p.label)" }
+        return "Live Claude account"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: state.providers.isEmpty ? "Accounts" : "Claude accounts")
@@ -958,6 +1042,22 @@ struct SettingsTab: View {
 
             SectionTitle(text: "General").padding(.top, 6)
             Box {
+                Row(icon: "menubar.rectangle", label: "Menu bar shows") {
+                    Menu {
+                        Button("Live Claude account") { state.menuBarSource = "active" }
+                        if state.accounts.count > 1 { Button("All Claude plans combined") { state.menuBarSource = "combined" } }
+                        Divider()
+                        ForEach(state.accounts) { a in Button(a.label) { state.menuBarSource = a.id } }
+                        if !state.providers.isEmpty {
+                            Divider()
+                            ForEach(state.providers) { p in Button("\(p.kind.name): \(p.label)") { state.menuBarSource = p.id } }
+                        }
+                    } label: {
+                        Text(menuBarChoice).font(Theme.caption)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                }
+                Hairline()
                 Row(icon: "bell", label: "Notifications") { OToggle(isOn: $state.notificationsOn) }
                 Hairline()
                 Row(icon: "power", label: "Open at login") { OToggle(isOn: $state.openAtLogin) }

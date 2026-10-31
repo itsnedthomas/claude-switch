@@ -160,7 +160,32 @@ final class AppState: ObservableObject {
         willSet { objectWillChange.send() }
         didSet { if notificationsOn { Notifier.shared.ask() } }
     }
+    /// What the menu bar shows: "active" (the live Claude account), "combined"
+    /// (every Claude plan), or one account's or tool's id.
+    @Setting("menuBarSource") var menuBarSource = "active" {
+        willSet { objectWillChange.send() }
+    }
     private var statusClear: Task<Void, Never>?
+
+    /// The menu bar's figure, whose picture to show, and a first name when there's no picture.
+    func menuBarReading() -> (week: Double?, photoID: String?, name: String) {
+        func claude(_ id: String?) -> (Double?, String?, String) {
+            let hasPhoto = id.flatMap { avatar($0) } != nil
+            let name = accounts.count > 1 && !hasPhoto ? account(id).map { String($0.label.split(separator: " ").first ?? "") } ?? "" : ""
+            return (id.flatMap { usage[$0]?.weekly?.percent }, id, name)
+        }
+        switch menuBarSource {
+        case "combined":
+            let vs = accounts.compactMap { usage[$0.id] }.map { $0.weekly?.percent ?? 0 }
+            return (vs.isEmpty ? nil : vs.reduce(0, +) / Double(vs.count), nil, "")
+        case let id where account(id) != nil:
+            return claude(id)
+        case let id:
+            guard let p = providers.first(where: { $0.id == id }) else { return claude(activeID) }
+            let u = providerUsage[id]
+            return ((u?.weekly ?? u?.windows.first)?.window.percent, id, avatar(id) == nil ? p.kind.name : "")
+        }
+    }
 
     var active: Account? { accounts.first { $0.id == activeID } }
     func account(_ id: String?) -> Account? { accounts.first { $0.id == id } }
@@ -175,7 +200,10 @@ final class AppState: ObservableObject {
             loadDemo()
             return
         }
-        if let d = try? Data(contentsOf: indexURL), let a = try? JSONDecoder().decode([Account].self, from: d) { accounts = a }
+        if let d = try? Data(contentsOf: indexURL), let a = try? JSONDecoder().decode([Account].self, from: d) {
+            // Max 20x is now called Ultra.
+            accounts = a.map { var x = $0; if x.plan == "Max 20x" { x.plan = "Ultra" }; return x }
+        }
         if let d = try? Data(contentsOf: providersURL), let p = try? JSONDecoder().decode([ProviderAccount].self, from: d) { providers = p }
         samples = history.samples
         // Last known usage, so a relaunch (or a rate-limited fetch) still has numbers.
@@ -200,8 +228,8 @@ final class AppState: ObservableObject {
     /// Side project added later so its week resets on another day, a week of activity.
     private func loadDemo() {
         let now = Date()
-        let work = Account(id: "demo-work", email: "you@company.com", label: "Work", plan: "Max 20x")
-        let personal = Account(id: "demo-personal", email: "you@personal.dev", label: "Personal", plan: "Max 20x")
+        let work = Account(id: "demo-work", email: "you@company.com", label: "Work", plan: "Ultra")
+        let personal = Account(id: "demo-personal", email: "you@personal.dev", label: "Personal", plan: "Ultra")
         let side = Account(id: "demo-side", email: "you@side.studio", label: "Side project", plan: "Max 5x")
         accounts = [work, personal, side]
         let weekReset = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))!.addingTimeInterval(2 * 3600)
@@ -409,7 +437,10 @@ final class AppState: ObservableObject {
     func refreshProviders(force: Bool) async {
         guard !offline else { return }
         let now = Date()
+        var fetched = false
+        defer { if fetched { record() } }
         for p in providers where force || (providerNext[p.id] ?? .distantPast) <= now {
+            fetched = true
             providerNext[p.id] = now.addingTimeInterval(.random(in: 270...330))
             do {
                 let u = try await Providers.usage(p)
@@ -486,9 +517,20 @@ final class AppState: ObservableObject {
         await refreshProviders(force: force)
     }
 
+    /// Other tools' weekly limits, for the usage chart. A tool with one account is
+    /// named by the tool alone.
+    var weeklyTools: [(id: String, label: String, weekly: Window)] {
+        providers.compactMap { p in
+            guard let w = providerUsage[p.id]?.weekly?.window else { return nil }
+            let alone = providers.filter { $0.kind == p.kind }.count == 1
+            return (p.id, alone ? p.kind.name : "\(p.kind.name) \(p.label)", w)
+        }
+    }
+
     private func record() {
         var week: [String: Double] = [:]
         for (id, u) in usage where accounts.contains(where: { $0.id == id }) { week[id] = u.weekly?.percent }
+        for t in weeklyTools { week[t.id] = t.weekly.percent }
         guard !week.isEmpty else { return }
         if let d = try? JSONEncoder().encode(usage) { try? d.write(to: usageURL, options: .atomic) }
         let s = Sample(t: Date(), week: week)
@@ -831,7 +873,7 @@ final class AppState: ObservableObject {
 
     static func planName(_ oauth: JSON) -> String {
         let tier = oauth["rateLimitTier"] as? String ?? ""
-        if tier.hasSuffix("max_20x") { return "Max 20x" }
+        if tier.hasSuffix("max_20x") { return "Ultra" }
         if tier.hasSuffix("max_5x") { return "Max 5x" }
         switch oauth["subscriptionType"] as? String {
         case "max": return "Max"

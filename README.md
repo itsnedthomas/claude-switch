@@ -7,7 +7,7 @@
 <p align="center">
   Run more than one Claude plan from your Mac's menu bar.<br>
   See every plan's weekly limit, switch the live login in one click, and let it switch for you.<br>
-  Track your Cursor and Codex usage beside it.
+  Track your Grok Bot and ChatGPT usage beside it.
 </p>
 
 <p align="center">
@@ -34,12 +34,12 @@ If you use Claude Code all day on two or more Max (or Pro) plans, you hit the we
 <tr>
 <td>
 
-**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also sign in Cursor accounts (the weekly allowance an X Subscription shares with Grok, or monthly usage without one) and Codex accounts (its 5-hour and weekly limits), as many of each as you like, each tool in a card of its own; they only show once you add one.
+**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also sign in Grok Bot accounts (the weekly allowance an X Subscription shares between Grok Bot, Grok and Cursor; Cursor's monthly usage without one) and ChatGPT accounts (Codex's limits), as many of each as you like, each tool in a card of its own; they only show once you add one.
 
 </td>
 <td>
 
-**Usage.** Every plan's weekly limit on one chart, each on its own clock (plans added on different days reset on different days), projected to its reset. It tells you which plan runs out first and whether, moving between them, you'd run out of all of them before one resets. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
+**Usage.** Every plan's weekly limit on one chart, each on its own clock (plans added on different days reset on different days), projected to its reset, with your Grok Bot and ChatGPT weekly limits beside them. Flip **Each / Combined** to see one line for all your Claude plans together. It tells you which plan runs out first and whether, moving between them, you'd run out of all of them before one resets. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
 
 </td>
 </tr>
@@ -55,7 +55,7 @@ If you use Claude Code all day on two or more Max (or Pro) plans, you hit the we
 
 <p align="center">
   <img src="docs/media/menubar.gif" width="360" alt="The menu bar item updating on a switch"><br>
-  <sub>The menu bar shows the live account's picture, its weekly bar and its weekly %.</sub>
+  <sub>The menu bar shows the live account's picture, its weekly bar and its weekly %. Settings can point it at any account, every Claude plan combined, or a Grok Bot or ChatGPT account.</sub>
 </p>
 
 ## Install
@@ -78,7 +78,7 @@ The account Claude Code is signed in to shows up straight away. **Add account** 
 - **Adding an account** runs `claude auth login` in a throwaway config folder, so the account you're on is never touched.
 - **Usage** comes from the endpoint behind Claude Code's `/usage`, about every 5 minutes per account. When Anthropic throttles it, the app backs off and, for the live account, reads the same figure from a one-token reply's rate-limit headers.
 - **Tokens.** Logins never leave your Keychain. The app refreshes the token of an account that isn't live; the live one is left to Claude Code.
-- **Cursor and Codex** sign in through their own pages in your browser (Cursor's login, which offers Grok and X; ChatGPT for Codex), so you choose the account. Claude Switch keeps those logins in your Keychain, refreshes them itself, and never touches the Cursor app's or Codex CLI's own login.
+- **Grok Bot and ChatGPT** sign in through their own pages in your browser (Cursor's login, which offers Grok and X; ChatGPT's own sign-in), so you choose the account. Claude Switch keeps those logins in your Keychain, refreshes them itself, and never touches the Cursor app's or Codex CLI's own login.
 - **Activity** is read from `~/.claude/projects` on your Mac and priced at public API rates. Nothing is uploaded.
 - An event log of every switch is kept at `~/Library/Application Support/ClaudeSwitch/events.log`.
 

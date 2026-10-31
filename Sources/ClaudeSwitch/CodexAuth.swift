@@ -32,7 +32,7 @@ enum CodexAuth {
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "client_id": clientID, "grant_type": "refresh_token", "refresh_token": rt,
         ])
-        return merge(try await post(req, signedOut: "Codex sign-in expired. Sign in again"), into: login)
+        return merge(try await post(req, signedOut: "ChatGPT sign-in expired. Sign in again"), into: login)
     }
 
     static func authorizeURL(redirect: String, challenge: String, state: String) -> URL {
