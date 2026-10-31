@@ -97,39 +97,24 @@ final class AppState: ObservableObject {
     @Published var login: LoginSession?
     @Published var loginURL: URL?
     @Published var plan: Plan?
+    /// Cursor and Codex logins shown under the Claude plans, one of each at most.
+    @Published var providers: [ProviderAccount] = []
+    @Published var providerUsage: [String: ProviderUsage] = [:]
+    @Published var providerErrors: [String: String] = [:]
+    private var providerNext: [String: Date] = [:]
 
     // Settings
     @Setting("autoSwitch") var autoSwitch = true { willSet { objectWillChange.send() } didSet { settingsChanged() } }
     @Setting("defaultID") var defaultID: String? = nil { willSet { objectWillChange.send() } didSet { settingsChanged() } }
-    @Setting("switchAtFive") var switchAtFive = 90.0 { willSet { objectWillChange.send() } didSet { settingsChanged() } }
     @Setting("switchAtWeek") var switchAtWeek = 98.0 { willSet { objectWillChange.send() } didSet { settingsChanged() } }
     @Setting("returnHome") var returnHome = true { willSet { objectWillChange.send() } didSet { settingsChanged() } }
     @Setting("returnMax") var returnMax = 5 { willSet { objectWillChange.send() } didSet { settingsChanged() } }
-    /// Set when you leave the default account by hand: autopilot then waits for the
-    /// default's current 5-hour window to reset instead of pulling you straight back.
+    /// Set when you leave the default account by hand while it still had room:
+    /// autopilot then leaves you be until you go back yourself.
     @Setting("leftHomeByHand") private var leftHomeByHand = false
-    /// Set when you cancel a planned return: no trip home until you next touch it.
+    /// Set when you cancel a planned return: no trip home until then.
     @Setting("homeHeldUntil") private var homeHeldUntil = 0.0      // unix time
     private var awayHeldUntil = Date.distantPast
-    // Schedule: working hours and which accounts take part
-    @Setting("kickoffOn") var kickoffOn = false { willSet { objectWillChange.send() } }
-    @Setting("workStart") var workStart = 540 { willSet { objectWillChange.send() } }          // minutes after midnight
-    @Setting("workEnd") var workEnd = 1440 { willSet { objectWillChange.send() } }
-    @Setting("kickoffJitterMax") var kickoffJitterMax = 10 { willSet { objectWillChange.send() } }
-    @Setting("kickoffWeekdays") var kickoffWeekdays = true { willSet { objectWillChange.send() } }
-    /// The hour your day turns over (the schedule runs from here to the same hour next day).
-    @Setting("dayStartHour") var dayStartHour = 2 {
-        willSet { objectWillChange.send() }
-        didSet {
-            // Keep working hours inside the new day.
-            let lo = dayStartHour * 60, hi = lo + 1440
-            func into(_ m: Int) -> Int { var m = m; while m < lo { m += 1440 }; while m > hi { m -= 1440 }; return m }
-            workStart = into(workStart)
-            workEnd = max(into(workEnd), workStart + 30)
-        }
-    }
-    @Setting("scheduleOff") var scheduleOff: [String] = [] { willSet { objectWillChange.send() } }
-    @Setting("kickoffLog") var kickoffLog: [String: String] = [:]
 
     @Published var activity = Activity()
     @Published var tab: Tab = .accounts
@@ -158,6 +143,7 @@ final class AppState: ObservableObject {
     }()
     private var indexURL: URL { Self.support.appendingPathComponent("accounts.json") }
     private var usageURL: URL { Self.support.appendingPathComponent("usage.json") }
+    private var providersURL: URL { Self.support.appendingPathComponent("providers.json") }
     private var owner: [String: String] = [:]          // access token -> account id
     private var queue: Task<Void, Never> = Task {}
     private var timer: Timer?
@@ -187,6 +173,7 @@ final class AppState: ObservableObject {
             return
         }
         if let d = try? Data(contentsOf: indexURL), let a = try? JSONDecoder().decode([Account].self, from: d) { accounts = a }
+        if let d = try? Data(contentsOf: providersURL), let p = try? JSONDecoder().decode([ProviderAccount].self, from: d) { providers = p }
         samples = history.samples
         // Last known usage, so a relaunch (or a rate-limited fetch) still has numbers.
         if let d = try? Data(contentsOf: usageURL), let u = try? JSONDecoder().decode([String: Usage].self, from: d) { usage = u }
@@ -206,43 +193,52 @@ final class AppState: ObservableObject {
         refresh()
     }
 
-    /// Two made-up accounts mid-afternoon: Work near its 5-hour limit with a switch
-    /// back planned, Personal live, a week of activity, the schedule on.
+    /// Three made-up plans mid-afternoon: Work near its weekly limit, Personal live,
+    /// Side project added later so its week resets on another day, a week of activity.
     private func loadDemo() {
         let now = Date()
         let work = Account(id: "demo-work", email: "you@company.com", label: "Work", plan: "Max 20x")
         let personal = Account(id: "demo-personal", email: "you@personal.dev", label: "Personal", plan: "Max 20x")
-        accounts = [work, personal]
-        let weekReset = Calendar.current.date(byAdding: .day, value: 5, to: Calendar.current.startOfDay(for: now))!.addingTimeInterval(2 * 3600)
+        let side = Account(id: "demo-side", email: "you@side.studio", label: "Side project", plan: "Max 5x")
+        accounts = [work, personal, side]
+        let weekReset = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))!.addingTimeInterval(2 * 3600)
+        let sideReset = now.addingTimeInterval(6 * 86_400 + 3 * 3600)
+        let figures = [work.id: 91.0, personal.id: 44.0, side.id: 6.0]
         usage = [
-            work.id: Usage(fiveHour: Window(percent: 93, resetsAt: now.addingTimeInterval(52 * 60)),
-                           weekly: Window(percent: 38, resetsAt: weekReset), fetchedAt: now),
-            personal.id: Usage(fiveHour: Window(percent: 18, resetsAt: now.addingTimeInterval(3 * 3600 + 41 * 60)),
-                               weekly: Window(percent: 17, resetsAt: weekReset), fetchedAt: now),
+            work.id: Usage(weekly: Window(percent: figures[work.id]!, resetsAt: weekReset), fetchedAt: now),
+            personal.id: Usage(weekly: Window(percent: figures[personal.id]!, resetsAt: weekReset), fetchedAt: now),
+            side.id: Usage(weekly: Window(percent: figures[side.id]!, resetsAt: sideReset), fetchedAt: now),
         ]
         activeID = personal.id
         defaultID = work.id
         autoSwitch = true
         switchAtWeek = 95
         returnMax = 5
-        kickoffOn = true
-        workStart = 9 * 60
-        workEnd = 23 * 60
-        kickoffWeekdays = true
         notificationsOn = true
-        plan = Plan(kind: .home, target: work.id, at: now.addingTimeInterval(55 * 60))
-        // A week of readings: both plans climbing through working hours, ending on today's figures.
-        let start = weekReset.addingTimeInterval(-7 * 86_400)
-        var hours: [Date] = []
-        var t = start
-        while t < now { hours.append(t); t = t.addingTimeInterval(3600) }
-        let busy = hours.filter { (9...22).contains(Calendar.current.component(.hour, from: $0)) }.count
-        var done = 0
-        for h in hours {
-            if (9...22).contains(Calendar.current.component(.hour, from: h)) { done += 1 }
-            let f = busy == 0 ? 1 : Double(done) / Double(busy)
-            samples.append(Sample(t: h, five: [:], week: [work.id: 38 * f, personal.id: 17 * f]))
+        providers = [ProviderAccount(kind: .cursor, email: "you@company.com", plan: "Pro"),
+                     ProviderAccount(kind: .codex, email: "you@personal.dev", plan: "Plus")]
+        providerUsage = [
+            "cursor": ProviderUsage(windows: [ProviderWindow(title: "Monthly", icon: "calendar",
+                                                             window: Window(percent: 37, resetsAt: now.addingTimeInterval(19 * 86_400)), length: 30 * 86_400, note: nil)],
+                                    plan: "Pro", fetchedAt: now),
+            "codex": ProviderUsage(windows: [ProviderWindow(title: "5-hour", icon: "clock", window: Window(percent: 22, resetsAt: now.addingTimeInterval(3 * 3600)), length: 5 * 3600, note: nil),
+                                             ProviderWindow(title: "Weekly", icon: "calendar", window: Window(percent: 48, resetsAt: now.addingTimeInterval(4 * 86_400)), length: 7 * 86_400, note: nil)],
+                                   plan: "Plus", fetchedAt: now),
+        ]
+        // Each plan's readings through working hours, from its own week's start to today's figure.
+        for a in accounts {
+            guard let reset = usage[a.id]?.weekly?.resetsAt, let target = figures[a.id] else { continue }
+            var hours: [Date] = []
+            var t = reset.addingTimeInterval(-7 * 86_400)
+            while t < now { hours.append(t); t = t.addingTimeInterval(3600) }
+            let busy = max(1, hours.filter { (9...22).contains(Calendar.current.component(.hour, from: $0)) }.count)
+            var done = 0
+            for h in hours {
+                if (9...22).contains(Calendar.current.component(.hour, from: h)) { done += 1 }
+                samples.append(Sample(t: h, week: [a.id: target * Double(done) / Double(busy)]))
+            }
         }
+        samples.sort { $0.t < $1.t }
         // Activity: Mon–Fri working hours, busiest early afternoon.
         var a = Activity(loaded: true)
         var c = Calendar(identifier: .iso8601); c.timeZone = .current
@@ -277,18 +273,18 @@ final class AppState: ObservableObject {
     }
 
     func switchTo(_ id: String) {
-        if id != defaultID, activeID == defaultID { leftHomeByHand = true }
+        if id != defaultID, activeID == defaultID, defaultID.map(healthy) == true { leftHomeByHand = true }
         if id == defaultID { leftHomeByHand = false; homeHeldUntil = 0 }
         awayHeldUntil = .distantPast
         plan = nil
         enqueue { await self.doSwitch(id) }
     }
 
-    /// Cancels just this move. A cancelled return skips the default's next window,
-    /// then auto-switch carries on as normal; a cancelled move away waits 15 minutes.
+    /// Cancels just this move. A cancelled return waits for the default's weekly reset
+    /// (or a day), then auto-switch carries on as normal; a cancelled move away waits 15 minutes.
     func cancelPlan() {
         guard let p = plan else { return }
-        if p.kind == .home { homeHeldUntil = p.at.addingTimeInterval(5 * 3600).timeIntervalSince1970 }
+        if p.kind == .home { homeHeldUntil = (usage[p.target]?.weekly?.resetsAt ?? p.at.addingTimeInterval(86_400)).timeIntervalSince1970 }
         else { awayHeldUntil = Date().addingTimeInterval(15 * 60) }
         log("cancelled \(p.kind == .home ? "return" : "switch") to \(account(p.target)?.label ?? "?")")
         plan = nil
@@ -336,6 +332,57 @@ final class AppState: ObservableObject {
 
     func cancelLogin() {
         login?.cancel()
+    }
+
+    /// Kinds that are signed in on this Mac and not added yet.
+    var addableProviders: [ProviderKind] {
+        ProviderKind.allCases.filter { k in !providers.contains { $0.kind == k } }
+    }
+
+    /// Adds the Cursor or Codex login already on this Mac. Nothing to sign in to here:
+    /// each app keeps its own login and we only read it.
+    func addProvider(_ kind: ProviderKind) {
+        guard !providers.contains(where: { $0.kind == kind }) else { return }
+        guard let p = Providers.detect(kind) else {
+            status = kind == .cursor ? "Sign in to the Cursor app first" : "Sign in to Codex with ChatGPT first"
+            return
+        }
+        providers.append(p)
+        saveProviders()
+        status = "Added \(kind.name)"
+        providerNext[p.id] = nil
+        Task { await refreshProviders(force: true) }
+    }
+
+    func removeProvider(_ id: String) {
+        providers.removeAll { $0.id == id }
+        providerUsage[id] = nil
+        providerErrors[id] = nil
+        saveProviders()
+    }
+
+    /// Each provider about every 5 minutes; `force` (the refresh button) fetches all.
+    func refreshProviders(force: Bool) async {
+        guard !offline else { return }
+        let now = Date()
+        for p in providers where force || (providerNext[p.id] ?? .distantPast) <= now {
+            providerNext[p.id] = now.addingTimeInterval(.random(in: 270...330))
+            do {
+                let u = try await Providers.usage(p.kind)
+                providerUsage[p.id] = u
+                providerErrors[p.id] = nil
+                if let plan = u.plan, let i = providers.firstIndex(where: { $0.id == p.id }), providers[i].plan != plan {
+                    providers[i].plan = plan
+                    saveProviders()
+                }
+            } catch {
+                providerErrors[p.id] = error.localizedDescription
+            }
+        }
+    }
+
+    private func saveProviders() {
+        if let d = try? JSONEncoder().encode(providers) { try? d.write(to: providersURL, options: .atomic) }
     }
 
     // MARK: - Work
@@ -392,18 +439,15 @@ final class AppState: ObservableObject {
         for acct in due { await fetchUsage(acct) }
         if !due.isEmpty { record() }
         await autopilot()
-        await checkKickoffs()
+        await refreshProviders(force: force)
     }
 
     private func record() {
-        var five: [String: Double] = [:], week: [String: Double] = [:]
-        for (id, u) in usage where accounts.contains(where: { $0.id == id }) {
-            five[id] = u.fiveHour?.percent
-            week[id] = u.weekly?.percent
-        }
+        var week: [String: Double] = [:]
+        for (id, u) in usage where accounts.contains(where: { $0.id == id }) { week[id] = u.weekly?.percent }
         guard !week.isEmpty else { return }
         if let d = try? JSONEncoder().encode(usage) { try? d.write(to: usageURL, options: .atomic) }
-        let s = Sample(t: Date(), five: five, week: week)
+        let s = Sample(t: Date(), week: week)
         history.append(s)
         samples = history.samples
     }
@@ -435,13 +479,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// An account inside a window (the live one, or one a kick-off started) can take a
-    /// one-token reply without starting anything new, and the reply's headers carry the
-    /// same 5-hour and weekly figures. At most every 5 minutes.
+    /// The live account is in use anyway, so a one-token reply costs it nothing that
+    /// matters, and the reply's headers carry the weekly figure. At most every 5 minutes.
     private func probeIfLive(_ acct: Account) async {
         let now = Date()
-        let inWindow = acct.id == activeID || (usage[acct.id]?.fiveHour?.resetsAt.map { $0 > now } ?? false)
-        guard inWindow, (usage[acct.id]?.fetchedAt ?? .distantPast).timeIntervalSince(now) < -240,
+        guard acct.id == activeID, (usage[acct.id]?.fetchedAt ?? .distantPast).timeIntervalSince(now) < -240,
               (lastProbe[acct.id] ?? .distantPast).timeIntervalSince(now) < -280 else { return }
         lastProbe[acct.id] = now
         if let u = try? await API.probe(try await token(for: acct)) { usage[acct.id] = u; errors[acct.id] = nil }
@@ -518,26 +560,22 @@ final class AppState: ObservableObject {
 
     // MARK: - Autopilot
 
-    /// Under both limits. The live account needs a reading from the last 10 minutes.
-    /// An idle account barely moves, so an older reading will do: up to 6 hours if its
-    /// 5-hour window has since ended (it's back to 0%), 30 minutes if one is running.
+    /// Under its weekly limit. The live account needs a reading from the last 10
+    /// minutes; an idle one barely moves, so one from the last 2 hours will do (or
+    /// any reading, once its week has reset back to 0%).
     func healthy(_ id: String) -> Bool {
         guard let u = usage[id] else { return false }
         let now = Date()
-        let ended = u.fiveHour?.resetsAt.map { $0 <= now } ?? true
-        let five = ended ? 0 : (u.fiveHour?.percent ?? 0)
-        let maxAge: TimeInterval = id == activeID ? 600 : ended ? 6 * 3600 : 1800
+        if let r = u.weekly?.resetsAt, r <= now { return true }
+        let maxAge: TimeInterval = id == activeID ? 600 : 2 * 3600
         guard now.timeIntervalSince(u.fetchedAt) <= maxAge else { return false }
-        return five < switchAtFive && (u.weekly?.percent ?? 0) < switchAtWeek
+        return (u.weekly?.percent ?? 0) < switchAtWeek
     }
 
-    /// When the windows holding this account over its limits reset.
+    /// When the weekly window holding this account over its limit resets.
     private func clearsAt(_ id: String) -> Date? {
-        guard let u = usage[id] else { return nil }
-        var dates: [Date] = []
-        if let w = u.fiveHour, w.percent >= switchAtFive, let r = w.resetsAt { dates.append(r) }
-        if let w = u.weekly, w.percent >= switchAtWeek, let r = w.resetsAt { dates.append(r) }
-        return dates.max()
+        guard let w = usage[id]?.weekly, w.percent >= switchAtWeek else { return nil }
+        return w.resetsAt
     }
 
     private func humanDelay(minutes: ClosedRange<Int>) -> TimeInterval {
@@ -579,21 +617,10 @@ final class AppState: ObservableObject {
             return
         }
         guard plan?.kind != .home else { return }
-        var base = clearsAt(home) ?? now
-        if leftHomeByHand, healthy(home) {
-            // You chose to leave a default that had room: wait out its current window,
-            // and if it had no window running, stay put until you switch back yourself.
-            guard let r = usage[home]?.fiveHour?.resetsAt, r > now else { return }
-            base = max(base, r)
-        }
-        if base < now { base = now }
-        // With the schedule on, go back when it starts the default's next window,
-        // so both pages show the same time.
-        if kickoffOn, let start = self.plan(for: now).first(where: { $0.account.id == home && $0.start >= base.addingTimeInterval(-60) })?.start {
-            plan = Plan(kind: .home, target: home, at: start)
-        } else {
-            plan = Plan(kind: .home, target: home, at: base.addingTimeInterval(humanDelay(minutes: 1...max(1, returnMax))))
-        }
+        // You chose to leave a default that had room: stay put until you go back yourself.
+        if leftHomeByHand, healthy(home) { return }
+        let base = max(clearsAt(home) ?? now, now)
+        plan = Plan(kind: .home, target: home, at: base.addingTimeInterval(humanDelay(minutes: 1...max(1, returnMax))))
     }
 
     /// Works out whose login is live and keeps our copy of it current: Claude Code

@@ -28,7 +28,7 @@ enum Film {
         NSApp.appearance = NSAppearance(named: .aqua)
 
         // The tour: each tab revealed, the cursor moving to the next tab and clicking.
-        let beats: [(Tab, Double)] = [(.accounts, 3.4), (.usage, 3.8), (.schedule, 3.4), (.settings, 3.2)]
+        let beats: [(Tab, Double)] = [(.accounts, 3.4), (.usage, 3.8), (.settings, 3.2)]
         var heights: [Tab: CGFloat] = [:]
         for (tab, _) in beats { state.tab = tab; filmTime = 10; heights[tab] = panel(state, window).size.height }
         var frame = 0
@@ -63,7 +63,7 @@ enum Film {
                   to: out.appendingPathComponent("\(tab.rawValue.lowercased())-panel.png"))
         }
 
-        // The menu bar on a switch: Work at 93% hands over to Personal at 18%.
+        // The menu bar on a switch: Work at 91% hands over to Personal at 44%.
         let mbFrames = Int(2.6 * fps)
         for i in 0..<mbFrames {
             let t = Double(i) / fps
@@ -87,7 +87,7 @@ enum Film {
     static func tabPoint(_ tab: Tab) -> NSPoint {
         let i = CGFloat(Tab.allCases.firstIndex(of: tab)!)
         let trackW = panelWidth - 28 - 6 - 22
-        return NSPoint(x: panelX + 14 + 2 + trackW / 8 * (2 * i + 1), y: menuBarHeight + 8 + 14 + 13)
+        return NSPoint(x: panelX + 14 + 2 + trackW / CGFloat(2 * Tab.allCases.count) * (2 * i + 1), y: menuBarHeight + 8 + 14 + 13)
     }
 
     static var panelX: CGFloat { itemMidX - panelWidth / 2 }
@@ -116,7 +116,7 @@ enum Film {
         let rep = canvas(stage)
         draw(in: rep) {
             ground(NSRect(origin: .zero, size: stage), glowAt: NSPoint(x: itemMidX, y: stage.height - 320))
-            menuBarStrip(width: stage.width, state: state, five: state.active.flatMap { state.usage[$0.id]?.fiveHour?.percent },
+            menuBarStrip(width: stage.width, state: state,
                          week: state.active.flatMap { state.usage[$0.id]?.weekly?.percent }, avatarID: state.activeID)
             let top = stage.height - menuBarHeight - 8
             let card = NSRect(x: panelX, y: top - cardHeight, width: panelWidth, height: cardHeight)
@@ -146,7 +146,7 @@ enum Film {
         let size = NSSize(width: 520, height: 110)
         let rep = canvas(size)
         let work = state.accounts[0], personal = state.accounts[1]
-        let five = 93 + (18 - 93) * k, week = 38 + (17 - 38) * k
+        let week = 91 + (44 - 91) * k
         draw(in: rep) {
             ground(NSRect(origin: .zero, size: size), glowAt: NSPoint(x: size.width / 2, y: size.height / 2))
             // A zoomed menu bar: the item in the middle, scaled up 2.5x.
@@ -161,11 +161,11 @@ enum Film {
             NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).stroke()
             let id = k < 0.5 ? work.id : personal.id
             if let photo = AppState.demoAvatar(id) {
-                let img = menuBarImage(photo: photo, five: five, week: week)
+                let img = menuBarImage(photo: photo, week: week)
                 img.draw(in: NSRect(x: -52, y: -8, width: img.size.width, height: img.size.height),
                          from: .zero, operation: .sourceOver, fraction: 1)
             }
-            let text = NSAttributedString(string: "\(Int(five.rounded()))%", attributes: [
+            let text = NSAttributedString(string: "\(Int(week.rounded()))%", attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular), .foregroundColor: NSColor.labelColor])
             text.draw(at: NSPoint(x: -6, y: -8))
             ctx.restoreGState()
@@ -173,15 +173,15 @@ enum Film {
         return rep
     }
 
-    static func menuBarStrip(width: CGFloat, state: AppState, five: Double?, week: Double?, avatarID: String?) {
+    static func menuBarStrip(width: CGFloat, state: AppState, week: Double?, avatarID: String?) {
         let bar = NSRect(x: 0, y: stage.height - menuBarHeight, width: width, height: menuBarHeight)
         NSColor.white.withAlphaComponent(0.85).setFill(); bar.fill()
         NSColor.black.withAlphaComponent(0.07).setFill(); NSRect(x: 0, y: bar.minY, width: width, height: 1).fill()
         let midY = bar.midY
-        // The app's item: picture, bars, 5-hour %.
+        // The app's item: picture, weekly bar and %.
         if let id = avatarID, let photo = state.avatar(id) {
-            let img = menuBarImage(photo: photo, five: five, week: week)
-            let text = NSAttributedString(string: "\(Int((five ?? 0).rounded()))%", attributes: [
+            let img = menuBarImage(photo: photo, week: week)
+            let text = NSAttributedString(string: "\(Int((week ?? 0).rounded()))%", attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular), .foregroundColor: NSColor.black.withAlphaComponent(0.85)])
             let total = img.size.width + 5 + text.size().width
             let x0 = itemMidX - total / 2

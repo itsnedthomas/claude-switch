@@ -5,13 +5,13 @@ struct Window: Equatable, Codable {
     var resetsAt: Date?
 }
 
+/// Claude plans have one limit now: the weekly one. (The 5-hour window was dropped.)
 struct Usage: Equatable, Codable {
-    var fiveHour: Window?
     var weekly: Window?
     var fetchedAt: Date
 
     /// How close the account is to being blocked.
-    var pressure: Double { max(fiveHour?.percent ?? 0, weekly?.percent ?? 0) }
+    var pressure: Double { weekly?.percent ?? 0 }
 }
 
 enum APIError: LocalizedError {
@@ -23,7 +23,7 @@ enum APIError: LocalizedError {
         switch self {
         case .http(401, _): return "Signed out. Add this account again."
         case .http(429, _): return "Rate limited, will retry."
-        case .http(let c, _): return "Anthropic returned \(c)."
+        case .http(let c, _): return "The server returned \(c)."
         case .expired: return "Waiting for Claude Code to refresh its login."
         case .bad(let s): return s
         }
@@ -50,7 +50,7 @@ enum API {
 
     static func usage(_ token: String) async throws -> Usage {
         let j = try await get("usage", token: token)
-        return Usage(fiveHour: window(j["five_hour"]), weekly: window(j["seven_day"]), fetchedAt: Date())
+        return Usage(weekly: window(j["seven_day"]), fetchedAt: Date())
     }
 
     static func profile(_ token: String) async throws -> JSON { try await get("profile", token: token) }
@@ -97,16 +97,9 @@ enum API {
         return out
     }
 
-    /// A one-token Haiku message: enough to start the account's 5-hour window. Returns
-    /// the limits from the reply's headers.
-    @discardableResult
-    static func kickoff(_ token: String) async throws -> Usage {
-        try await probe(token, greeting: ["hi", "morning", "hey", "hello", "ok"].randomElement()!)
-    }
-
     /// Limits read off a one-token reply's rate-limit headers, for when the usage
-    /// endpoint is throttled. Only for an account already inside a window.
-    static func probe(_ token: String, greeting: String = "hi") async throws -> Usage {
+    /// endpoint is throttled. Only for the live account, which is in use anyway.
+    static func probe(_ token: String) async throws -> Usage {
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!, timeoutInterval: 30)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -116,7 +109,7 @@ enum API {
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": "claude-haiku-4-5-20251001", "max_tokens": 1,
             "system": [["type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."]],
-            "messages": [["role": "user", "content": greeting]],
+            "messages": [["role": "user", "content": "hi"]],
         ])
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
@@ -127,7 +120,7 @@ enum API {
             let reset = http.value(forHTTPHeaderField: "anthropic-ratelimit-unified-\(key)-reset").flatMap(Double.init).map { Date(timeIntervalSince1970: $0) }
             return Window(percent: (u * 100).rounded(), resetsAt: reset)
         }
-        return Usage(fiveHour: window("5h"), weekly: window("7d"), fetchedAt: Date())
+        return Usage(weekly: window("7d"), fetchedAt: Date())
     }
 
     static func expiresSoon(_ oauth: JSON, within: TimeInterval = 300) -> Bool {

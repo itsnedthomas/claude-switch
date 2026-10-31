@@ -1,9 +1,9 @@
 import Foundation
 
-/// One usage reading for every account, taken on each fetch.
+/// One usage reading for every account, taken on each fetch. (Older lines also
+/// carry a 5-hour figure, which is ignored.)
 struct Sample: Codable {
     var t: Date
-    var five: [String: Double]
     var week: [String: Double]
 }
 
@@ -63,7 +63,9 @@ func price(_ model: String) -> (input: Double, output: Double, read: Double) {
     if model.contains("fable") || model.contains("mythos") { return (10, 50, 0.25) }
     if model.contains("opus-5-5") { return (4, 20, 0.20) }
     if model.contains("opus") { return (5, 25, 0.5) }
+    if model.contains("sonnet-4") { return (3, 15, 0.3) }
     if model.contains("sonnet") { return (2, 10, 0.2) }
+    if model.contains("haiku-5") { return (0.1, 0.5, 0.01) }
     if model.contains("haiku") { return (1, 5, 0.1) }
     return (5, 25, 0.5)
 }
@@ -72,7 +74,7 @@ func price(_ model: String) -> (input: Double, output: Double, read: Double) {
 /// last scan stopped, so only the first scan is slow.
 final class ActivityScanner: @unchecked Sendable {
     struct Cache: Codable {
-        var version = 2
+        var version = 3
         var offsets: [String: UInt64] = [:]
         var lastID: [String: String] = [:]
         var cost: [Int: Double] = [:]
@@ -87,7 +89,7 @@ final class ActivityScanner: @unchecked Sendable {
     init(dir: URL) {
         cacheURL = dir.appendingPathComponent("activity-v2.json")
         try? FileManager.default.removeItem(at: dir.appendingPathComponent("activity.json"))
-        if let d = try? Data(contentsOf: cacheURL), let c = try? JSONDecoder().decode(Cache.self, from: d), c.version == 2 { cache = c }
+        if let d = try? Data(contentsOf: cacheURL), let c = try? JSONDecoder().decode(Cache.self, from: d), c.version == 3 { cache = c }
     }
 
     /// Blocking; call off the main thread.

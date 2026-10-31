@@ -3,13 +3,12 @@ import Charts
 import SwiftUI
 
 enum Tab: String, CaseIterable {
-    case accounts = "Accounts", usage = "Usage", schedule = "Schedule", settings = "Settings"
+    case accounts = "Accounts", usage = "Usage", settings = "Settings"
 
     var icon: String {
         switch self {
         case .accounts: return "person.2"
         case .usage: return "chart.bar"
-        case .schedule: return "calendar"
         case .settings: return "gearshape"
         }
     }
@@ -35,7 +34,7 @@ func hhmm(_ minutes: Int) -> String {
     return String(format: "%02d:%02d", m / 60, m % 60)
 }
 
-/// Each account's colour in the schedule, in list order.
+/// Each account's colour in the usage chart, in list order.
 func accountColor(_ index: Int) -> Color {
     [Theme.accent, Color(red: 0.56, green: 0.42, blue: 0.94), Color(red: 0.07, green: 0.65, blue: 0.58),
      Color(red: 0.91, green: 0.24, blue: 0.51)][index % 4]
@@ -81,7 +80,6 @@ struct PanelView: View {
                     switch state.tab {
                     case .accounts: AccountsTab()
                     case .usage: UsageTab()
-                    case .schedule: ScheduleTab()
                     case .settings: SettingsTab()
                     }
                 }
@@ -241,6 +239,7 @@ struct AccountsTab: View {
                     .font(Theme.caption).foregroundStyle(Theme.muted)
             } else {
                 Box {
+                    if !state.providers.isEmpty { CardHeader(icon: "sparkle", title: "Claude"); Hairline() }
                     ForEach(Array(state.accounts.enumerated()), id: \.1.id) { i, acct in
                         if i > 0 { Hairline() }
                         AccountRow(account: acct, ns: ns)
@@ -248,6 +247,7 @@ struct AccountsTab: View {
                 }
                 .animation(.snappy(duration: 0.4), value: state.activeID)
             }
+            ForEach(state.providers) { p in ProviderCard(provider: p) }
             Footer()
         }
     }
@@ -266,7 +266,7 @@ struct Footer: View {
                 Spacer(minLength: 4)
                 HoverLink(icon: "xmark", text: "Cancel", tone: .danger, rest: Theme.subtle) { state.cancelLogin() }
             } else {
-                HoverLink(icon: "plus", text: "Add account") { state.addAccount() }
+                AddAccountMenu()
                 Spacer(minLength: 8)
                 if let plan = state.plan, let target = state.account(plan.target) {
                     HoverLink(icon: plan.kind == .home ? "arrow.uturn.backward" : "arrow.right", hoverIcon: "xmark",
@@ -339,15 +339,91 @@ struct AccountRow: View {
                     HoverButton(title: "Switch", icon: "arrow.left.arrow.right") { state.switchTo(account.id) }.transition(.opacity)
                 }
             }
-            HStack(alignment: .top, spacing: 18) {
-                UsageBlock(icon: "clock", title: "5-hour", window: u?.fiveHour, length: 5 * 3600, hovering: $hovering)
-                UsageBlock(icon: "calendar", title: "Weekly", window: u?.weekly, length: 7 * 86_400, hovering: $hovering)
-            }
+            UsageBlock(icon: "calendar", title: "Weekly", window: u?.weekly, length: 7 * 86_400, hovering: $hovering)
             if let e = state.errors[account.id] {
                 Text(e).font(Theme.micro).foregroundStyle(Theme.warnInk).lineLimit(1)
             }
         }
         .padding(12)
+        .zIndex(hovering ? 1 : 0)
+    }
+}
+
+/// "Add account": straight to Claude's sign-in, or a menu of Claude and whichever
+/// of Cursor and Codex aren't added yet.
+struct AddAccountMenu: View {
+    @EnvironmentObject var state: AppState
+    @State private var hover = false
+
+    var body: some View {
+        if state.addableProviders.isEmpty {
+            HoverLink(icon: "plus", text: "Add account") { state.addAccount() }
+        } else {
+            Menu {
+                Button("Claude account") { state.addAccount() }
+                Section("Track another tool") {
+                    ForEach(state.addableProviders) { k in Button(k.name) { state.addProvider(k) } }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).frame(width: 12)
+                    Text("Add account")
+                }
+                .foregroundStyle(hover ? Theme.accent : Theme.muted)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .onHover { h in withAnimation(.easeOut(duration: 0.18)) { hover = h } }
+        }
+    }
+}
+
+/// A card's title line, for when Claude shares the tab with other tools.
+struct CardHeader: View {
+    let icon: String
+    let title: String
+    var subtitle: String = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.subtle).frame(width: 14)
+            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
+            Spacer(minLength: 6)
+            if !subtitle.isEmpty { Text(subtitle).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+}
+
+/// A Cursor or Codex login: its own card, with one bar per limit it reports.
+struct ProviderCard: View {
+    @EnvironmentObject var state: AppState
+    let provider: ProviderAccount
+    @State private var hovering = false
+
+    var body: some View {
+        let u = state.providerUsage[provider.id]
+        Box {
+            CardHeader(icon: provider.kind == .cursor ? "cursorarrow" : "terminal", title: provider.kind.name,
+                       subtitle: [provider.email, provider.plan].filter { !$0.isEmpty }.joined(separator: " · "))
+            Hairline()
+            VStack(alignment: .leading, spacing: 8) {
+                if let u, !u.windows.isEmpty {
+                    HStack(alignment: .top, spacing: 18) {
+                        ForEach(Array(u.windows.enumerated()), id: \.offset) { _, w in
+                            UsageBlock(icon: w.icon, title: w.title, window: w.window, length: w.length, hovering: $hovering)
+                        }
+                    }
+                    let notes = u.windows.compactMap(\.note)
+                    if !notes.isEmpty { Text(notes.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
+                } else if state.providerErrors[provider.id] == nil {
+                    Text(u == nil ? "Reading usage…" : "No limits reported").font(Theme.micro).foregroundStyle(Theme.subtle)
+                }
+                if let e = state.providerErrors[provider.id] {
+                    Text(e).font(Theme.micro).foregroundStyle(Theme.warnInk).lineLimit(1)
+                }
+            }
+            .padding(12)
+        }
         .zIndex(hovering ? 1 : 0)
     }
 }
@@ -428,41 +504,37 @@ struct UsageTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let f = WeekForecast.make(ids: state.accounts.map(\.id), usage: state.usage, samples: state.samples) {
-                WeekCard(f: f, plans: state.accounts.count)
+            if let f = WeekForecast.make(accounts: state.accounts.map { ($0.id, $0.label) }, usage: state.usage, samples: state.samples) {
+                WeekCard(f: f, colors: Dictionary(uniqueKeysWithValues: state.accounts.enumerated().map { ($1.id, accountColor($0)) }))
             } else {
-                Text("Waiting for every account's usage…").font(Theme.caption).foregroundStyle(Theme.muted)
+                Text(state.usage.isEmpty ? "Waiting for usage…" : "No plan has started its week yet. It starts when you next use it.")
+                    .font(Theme.caption).foregroundStyle(Theme.muted)
             }
             ActivityCard(activity: state.activity, accounts: state.accounts.count)
         }
     }
 }
 
+/// Every plan's week on one chart: each plan's line in its own colour from its own
+/// week's start, dashed on to its own reset at its pace so far. The line under it
+/// says whether, moving between plans, you'd run out before one resets.
 struct WeekCard: View {
     let f: WeekForecast
-    let plans: Int
+    let colors: [String: Color]
     @State private var hoverDate: Date?
     @State private var shown = !animateIn
 
-    private var rate: Double {
-        let left = f.reset.timeIntervalSinceNow
-        return left > 0 ? (f.atReset - f.current) / left : 0
-    }
-
-    /// Used % at a moment: from the readings so far, projected after now.
-    private func value(at d: Date) -> Double {
-        if d >= Date() { return min(100, f.current + rate * d.timeIntervalSinceNow) }
-        return f.actual.last(where: { $0.0 <= d })?.1 ?? 0
-    }
+    private var single: Bool { f.plans.count == 1 && f.count == 1 }
 
     var body: some View {
         let over = f.current - f.shouldBe
-        let tone: Outlook.Tone = f.runsOut != nil ? .out : f.atReset >= 85 ? .close : .fine
+        let firstOut = f.plans.filter { $0.runsOut != nil }.min { $0.runsOut! < $1.runsOut! }
         Box {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("\(Int(f.current.rounded()))%").font(.system(size: 22, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
-                    Text(plans > 1 ? "of both plans this week" : "of your plan this week").font(Theme.caption).foregroundStyle(Theme.muted)
+                    Text(f.count > 2 ? "of your \(f.count) plans this week" : f.count == 2 ? "of both plans this week" : "of your plan this week")
+                        .font(Theme.caption).foregroundStyle(Theme.muted)
                     Spacer()
                     if over > 0 {
                         Chip(text: "\(Int(over.rounded()))% over pace", tone: .warn)
@@ -470,58 +542,92 @@ struct WeekCard: View {
                         Chip(text: "\(Int((-over).rounded()))% under pace", tone: .success)
                     }
                 }
-                chart(tone: tone)
+                chart
                     .frame(height: 120)
                     .padding(.top, 6)
                     .mask(alignment: .leading) {
                         GeometryReader { g in Rectangle().frame(width: g.size.width * appear(shown, delay: 0.15, duration: 0.9)) }
                     }
-                Group {
-                    if let d = hoverDate {
-                        let pace = min(100, d.timeIntervalSince(f.start) / WeekForecast.week * 100)
-                        Text("\(fullDate(d)) · \(d > Date() ? "on course for" : "used") \(Int(value(at: d).rounded()))% · even pace \(Int(pace.rounded()))%")
-                            .foregroundStyle(Theme.ink)
-                    } else if let out = f.runsOut {
-                        Text("At this pace you run out \(clock(out)), \(span(f.reset.timeIntervalSince(out))) early.").foregroundStyle(toneColor(.out))
-                    } else {
-                        Text("At this pace you finish the week on \(Int(f.atReset.rounded()))%.").foregroundStyle(Theme.muted)
+                if f.plans.count > 1 {
+                    HStack(spacing: 10) {
+                        ForEach(f.plans) { p in
+                            HStack(spacing: 4) {
+                                Circle().fill(colors[p.id] ?? Theme.accent).frame(width: 6, height: 6)
+                                Text("\(p.label) \(Int(p.current.rounded()))%").foregroundStyle(Theme.muted)
+                            }
+                        }
                     }
+                    .font(Theme.micro).lineLimit(1)
                 }
-                .font(Theme.micro).lineLimit(1)
+                readout(firstOut: firstOut).font(Theme.micro).lineLimit(1)
             }
             .padding(12)
         }
         .onAppear { withAnimation(.easeOut(duration: 0.7).delay(0.05)) { shown = true } }
     }
 
-    private func chart(tone: Outlook.Tone) -> some View {
-        let now = Date()
-        let end: (Date, Double) = f.runsOut.map { ($0, 100) } ?? (f.reset, min(f.atReset, 100))
-        let line = toneColor(tone)
-        return Chart {
-            LineMark(x: .value("t", f.start), y: .value("%", 0), series: .value("s", "pace"))
-                .foregroundStyle(Theme.subtle.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            LineMark(x: .value("t", f.reset), y: .value("%", 100), series: .value("s", "pace"))
-                .foregroundStyle(Theme.subtle.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            ForEach(Array(f.actual.enumerated()), id: \.offset) { _, p in
-                AreaMark(x: .value("t", p.0), y: .value("%", p.1)).foregroundStyle(Theme.accent.opacity(0.1))
-                LineMark(x: .value("t", p.0), y: .value("%", p.1), series: .value("s", "used"))
-                    .foregroundStyle(Theme.accent).lineStyle(StrokeStyle(lineWidth: 2))
+    @ViewBuilder private func readout(firstOut: WeekForecast.Plan?) -> some View {
+        if let d = hoverDate {
+            if single, let p = f.plans.first, let v = p.value(at: d) {
+                let pace = min(100, d.timeIntervalSince(p.start) / WeekForecast.week * 100)
+                Text("\(fullDate(d)) · \(d > Date() ? "on course for" : "used") \(Int(v.rounded()))% · even pace \(Int(pace.rounded()))%")
+                    .foregroundStyle(Theme.ink)
+            } else {
+                let parts = f.plans.compactMap { p in p.value(at: d).map { "\(p.label) \(Int($0.rounded()))%" } }
+                Text(([fullDate(d)] + parts).joined(separator: " · ")).foregroundStyle(Theme.ink)
             }
-            LineMark(x: .value("t", now), y: .value("%", f.current), series: .value("s", "projected"))
-                .foregroundStyle(line.opacity(0.75)).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-            LineMark(x: .value("t", end.0), y: .value("%", end.1), series: .value("s", "projected"))
-                .foregroundStyle(line.opacity(0.75)).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-            PointMark(x: .value("t", now), y: .value("%", f.current)).foregroundStyle(Theme.accent).symbolSize(24)
-            if let out = f.runsOut {
-                PointMark(x: .value("t", out), y: .value("%", 100)).foregroundStyle(Theme.danger).symbolSize(28)
+        } else if let out = f.poolRunsOut {
+            let next = f.plans.map(\.reset).filter { $0 > out }.min() ?? f.end
+            Text(single ? "At this pace you run out \(clock(out)), \(span(next.timeIntervalSince(out))) early."
+                        : "At this pace every plan runs out \(clock(out)), \(span(next.timeIntervalSince(out))) before one resets.")
+                .foregroundStyle(toneColor(.out))
+        } else if let p = firstOut, let out = p.runsOut {
+            Text(single ? "At this pace you run out \(clock(out)), \(span(p.reset.timeIntervalSince(out))) early."
+                        : "\(p.label) runs out \(clock(out)) at this pace; the others have room.")
+                .foregroundStyle(toneColor(single ? .out : .close))
+        } else if single, let p = f.plans.first {
+            Text("At this pace you finish the week on \(Int(p.atReset.rounded()))%.").foregroundStyle(Theme.muted)
+        } else {
+            Text("At this pace every plan finishes its week under its limit.").foregroundStyle(Theme.muted)
+        }
+    }
+
+    private var chart: some View {
+        let now = Date()
+        return Chart {
+            if f.sharedReset, let p = f.plans.first {
+                LineMark(x: .value("t", p.start), y: .value("%", 0), series: .value("s", "pace"))
+                    .foregroundStyle(Theme.subtle.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                LineMark(x: .value("t", p.reset), y: .value("%", 100), series: .value("s", "pace"))
+                    .foregroundStyle(Theme.subtle.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
+            ForEach(f.plans) { p in
+                let color = colors[p.id] ?? Theme.accent
+                let end: (Date, Double) = p.runsOut.map { ($0, 100) } ?? (p.reset, min(p.atReset, 100))
+                ForEach(Array(p.actual.enumerated()), id: \.offset) { _, pt in
+                    if f.plans.count == 1 {
+                        AreaMark(x: .value("t", pt.0), y: .value("%", pt.1)).foregroundStyle(color.opacity(0.1))
+                    }
+                    LineMark(x: .value("t", pt.0), y: .value("%", pt.1), series: .value("s", p.id))
+                        .foregroundStyle(color).lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                LineMark(x: .value("t", now), y: .value("%", p.current), series: .value("s", p.id + "-ahead"))
+                    .foregroundStyle(color.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                LineMark(x: .value("t", end.0), y: .value("%", end.1), series: .value("s", p.id + "-ahead"))
+                    .foregroundStyle(color.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                PointMark(x: .value("t", now), y: .value("%", p.current)).foregroundStyle(color).symbolSize(24)
+                if let out = p.runsOut {
+                    PointMark(x: .value("t", out), y: .value("%", 100)).foregroundStyle(Theme.danger).symbolSize(28)
+                }
+                if let d = hoverDate, let v = p.value(at: d) {
+                    PointMark(x: .value("t", d), y: .value("%", v)).foregroundStyle(Theme.ink).symbolSize(22)
+                }
             }
             if let d = hoverDate {
                 RuleMark(x: .value("hover", d)).foregroundStyle(Theme.subtle.opacity(0.5))
-                PointMark(x: .value("t", d), y: .value("%", value(at: d))).foregroundStyle(Theme.ink).symbolSize(22)
             }
         }
-        .chartXScale(domain: f.start...f.reset)
+        .chartXScale(domain: f.start...f.end)
         .chartYScale(domain: 0...100)
         .chartYAxis {
             AxisMarks(position: .leading, values: [0, 50, 100]) { v in
@@ -541,7 +647,7 @@ struct WeekCard: View {
                         switch phase {
                         case .active(let p):
                             let x = p.x - (proxy.plotFrame.map { g[$0].origin.x } ?? 0)
-                            if let d: Date = proxy.value(atX: x) { hoverDate = min(max(d, f.start), f.reset) }
+                            if let d: Date = proxy.value(atX: x) { hoverDate = min(max(d, f.start), f.end) }
                         case .ended:
                             hoverDate = nil
                         }
@@ -695,7 +801,7 @@ struct ActivityCard: View {
                 let cost = hours.reduce(0) { $0 + (activity.cost[$1] ?? 0) }
                 let toks = hours.reduce(0) { $0 + (activity.tokens[$1] ?? 0) }
                 let when = range == .week ? "this week" : range == .day ? "in the last 24 hours" : "today"
-                Text("\(dollars(cost)) at API prices (\(tokens(toks)) tokens) \(when)\(accounts > 1 ? ", both accounts" : "").")
+                Text("\(dollars(cost)) at API prices (\(tokens(toks)) tokens) \(when)\(accounts > 2 ? ", all \(accounts) accounts" : accounts == 2 ? ", both accounts" : "").")
                     .foregroundStyle(Theme.subtle)
             }
         }
@@ -734,174 +840,6 @@ struct MiniSwitch<T: RawRepresentable & CaseIterable & Hashable>: View where T.R
     }
 }
 
-// MARK: - Schedule
-
-struct ScheduleTab: View {
-    @EnvironmentObject var state: AppState
-
-    var body: some View {
-        let day = state.planDay()
-        let plan = state.plan(for: day)
-        VStack(alignment: .leading, spacing: 10) {
-            Box {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text(dayTitle(day)).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink)
-                        Spacer()
-                        Group {
-                            if let next = state.nextKickoff() {
-                                Text("Next: \(next.account.label) at \(clock(next.start))")
-                            } else if !state.kickoffOn {
-                                Text("Preview")
-                            }
-                        }
-                        .font(Theme.micro).foregroundStyle(Theme.subtle)
-                    }
-                    if plan.isEmpty {
-                        Text("Turn an account on below to plan its windows.").font(Theme.caption).foregroundStyle(Theme.muted)
-                    } else {
-                        Timeline(day: day, plan: plan, accounts: state.scheduled, all: state.accounts,
-                                 workStart: state.workStart, workEnd: state.workEnd, dayStartHour: state.dayStartHour)
-                    }
-                }
-                .padding(12)
-            }
-
-            Box {
-                Row(icon: "wand.and.stars", label: "Start sessions for me") { OToggle(isOn: $state.kickoffOn) }
-                Hairline()
-                VStack(spacing: 0) {
-                    Row(icon: "briefcase", label: "Working hours") {
-                        Text("\(hhmm(state.workStart)) – \(hhmm(state.workEnd))")
-                            .font(.system(size: 12, weight: .medium)).monospacedDigit().foregroundStyle(Theme.ink)
-                    }
-                    RangeSlider(lower: $state.workStart, upper: $state.workEnd, bounds: state.dayStartHour * 60...state.dayStartHour * 60 + 1440)
-                        .padding(.leading, 38).padding(.trailing, 12).padding(.bottom, 10)
-                }
-                ForEach(state.accounts) { a in
-                    Hairline()
-                    HStack(spacing: 10) {
-                        Avatar(account: a, size: 16).frame(width: 16)
-                        Text(a.label).font(Theme.body).foregroundStyle(Theme.ink).lineLimit(1)
-                        Spacer()
-                        OToggle(isOn: Binding(get: { state.inSchedule(a.id) }, set: { state.setInSchedule(a.id, $0) }))
-                    }
-                    .padding(.horizontal, 12).frame(height: 38)
-                }
-                Hairline()
-                Row(icon: "dice", label: "Random delay") {
-                    Nudge(value: Binding(get: { Double(state.kickoffJitterMax) }, set: { state.kickoffJitterMax = Int($0) }),
-                          step: 1, range: 1...30) { "up to \(Int($0)) min" }
-                }
-                Hairline()
-                Row(icon: "calendar.badge.clock", label: "Weekdays only") { OToggle(isOn: $state.kickoffWeekdays) }
-            }
-        }
-    }
-
-    private func dayTitle(_ d: Date) -> String {
-        let cal = Calendar.current
-        if cal.isDateInToday(d) { return "Today" }
-        if cal.isDateInTomorrow(d) { return "Tomorrow" }
-        let f = DateFormatter()
-        f.dateFormat = "EEEE"
-        return f.string(from: d)
-    }
-}
-
-/// The day from the hour it turns over (02:00 by default) to the same hour next day, one row per account. Each 5-hour window is a
-/// plain capsule ending at its reset time: grey when planned, blue while it's the
-/// one running, faint once it's over. Working hours sit as a thin line on the axis.
-struct Timeline: View {
-    @EnvironmentObject var state: AppState
-    let day: Date
-    let plan: [PlannedWindow]
-    let accounts: [Account]
-    let all: [Account]
-    let workStart: Int
-    let workEnd: Int
-    let dayStartHour: Int
-    @State private var shown = !animateIn
-
-    private let nameW: CGFloat = 92
-    private let rowH: CGFloat = 22
-
-    var body: some View {
-        let from = Calendar.current.startOfDay(for: day).addingTimeInterval(Double(dayStartHour) * 3600)
-        let span = 24 * 3600.0
-        let work0 = from.addingTimeInterval(Double(workStart - dayStartHour * 60) * 60)
-        let work1 = from.addingTimeInterval(Double(workEnd - dayStartHour * 60) * 60)
-        let now = Date()
-        let hm: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
-
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(accounts) { acct in
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Avatar(account: acct, size: 18)
-                        Text(acct.label).font(Theme.micro).foregroundStyle(Theme.muted).lineLimit(1)
-                    }
-                    .frame(width: nameW, alignment: .leading)
-                    GeometryReader { g in
-                        let x = { (d: Date) in CGFloat(d.timeIntervalSince(from) / span) * g.size.width }
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.lineSoft.opacity(0.6))
-                            if now > from && now < from.addingTimeInterval(span) {
-                                Rectangle().fill(Theme.ink.opacity(0.35)).frame(width: 1, height: rowH + 8).offset(x: x(now))
-                            }
-                            ForEach(Array(plan.filter { $0.account.id == acct.id }.enumerated()), id: \.1.id) { i, win in
-                                let s = max(win.start, from), e = min(win.end, from.addingTimeInterval(span))
-                                if x(e) - x(s) > 34 {
-                                    let running = win.start <= now && now < win.end
-                                    let past = win.end <= now
-                                    Capsule()
-                                        .fill(running ? Theme.accent : past ? Theme.lineSoft : Theme.sunken)
-                                        .overlay(Capsule().strokeBorder(running || past ? .clear : Theme.line))
-                                        .overlay {
-                                            Text(hm.string(from: win.end))
-                                                .font(.system(size: 9, weight: .medium)).monospacedDigit()
-                                                .foregroundStyle(running ? .white : past ? Theme.subtle.opacity(0.6) : Theme.muted)
-                                        }
-                                        .frame(width: max(0, x(e) - x(s) - 3), height: rowH)
-                                        .offset(x: x(s))
-                                        .opacity(appear(shown, delay: 0.15 + Double(i) * 0.08, duration: 0.35))
-                                        .scaleEffect(x: 0.9 + 0.1 * appear(shown, delay: 0.15 + Double(i) * 0.08, duration: 0.35), anchor: .leading)
-                                        .animation(filmTime == nil ? .easeOut(duration: 0.35).delay(Double(i) * 0.05) : nil, value: shown)
-                                        .help("\(acct.label): starts \(hm.string(from: win.start)), resets \(hm.string(from: win.end))")
-                                }
-                            }
-                        }
-                    }
-                    .frame(height: rowH)
-                }
-            }
-            // Axis: working hours as a thin line, hours under it
-            HStack(spacing: 8) {
-                Color.clear.frame(width: nameW, height: 1)
-                GeometryReader { g in
-                    let x = { (d: Date) in CGFloat(d.timeIntervalSince(from) / span) * g.size.width }
-                    ZStack(alignment: .topLeading) {
-                        Capsule().fill(Theme.lineSoft).frame(height: 2).offset(y: 1)
-                        Capsule().fill(Theme.accent.opacity(0.55))
-                            .frame(width: max(0, x(min(work1, from.addingTimeInterval(span))) - x(max(work0, from))), height: 2)
-                            .offset(x: x(max(work0, from)), y: 1)
-                        if now > from && now < from.addingTimeInterval(span) {
-                            Circle().fill(Theme.ink).frame(width: 5, height: 5).offset(x: x(now) - 2.5, y: -0.5)
-                        }
-                        ForEach(Array(stride(from: 0, through: 24, by: 4)), id: \.self) { h in
-                            Text(hm.string(from: from.addingTimeInterval(Double(h) * 3600)).prefix(2))
-                                .font(.system(size: 9)).monospacedDigit().foregroundStyle(Theme.subtle).fixedSize()
-                                .position(x: g.size.width * CGFloat(h) / 24, y: 13)
-                        }
-                    }
-                }
-                .frame(height: 20)
-            }
-        }
-        .onAppear { shown = true }
-    }
-}
-
 // MARK: - Settings
 
 struct SettingsTab: View {
@@ -909,7 +847,7 @@ struct SettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionTitle(text: "Accounts")
+            SectionTitle(text: state.providers.isEmpty ? "Accounts" : "Claude accounts")
             Box {
                 ForEach(Array(state.accounts.enumerated()), id: \.1.id) { i, a in
                     if i > 0 { Hairline() }
@@ -946,10 +884,6 @@ struct SettingsTab: View {
                     .menuStyle(.borderlessButton).fixedSize()
                 }
                 Hairline()
-                Row(icon: "clock", label: "Leave at 5-hour") {
-                    Nudge(value: $state.switchAtFive, step: 5, range: 50...100) { "\(Int($0))%" }
-                }
-                Hairline()
                 Row(icon: "calendar", label: "Leave at weekly") {
                     Nudge(value: $state.switchAtWeek, step: 1, range: 50...100) { "\(Int($0))%" }
                 }
@@ -962,15 +896,27 @@ struct SettingsTab: View {
                 }
             }
 
-            SectionTitle(text: "Schedule").padding(.top, 6)
+            SectionTitle(text: "Other tools").padding(.top, 6)
             Box {
-                Row(icon: "moon.stars", label: "Day turns over at") {
-                    Menu {
-                        ForEach(0..<7) { h in Button(String(format: "%02d:00", h)) { state.dayStartHour = h } }
-                    } label: {
-                        Text(String(format: "%02d:00", state.dayStartHour)).font(Theme.caption)
+                ForEach(Array(state.providers.enumerated()), id: \.1.id) { i, p in
+                    if i > 0 { Hairline() }
+                    HStack(spacing: 10) {
+                        Image(systemName: p.kind == .cursor ? "cursorarrow" : "terminal")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.subtle).frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(p.kind.name).font(Theme.body).foregroundStyle(Theme.ink)
+                            Text([p.email, p.plan].filter { !$0.isEmpty }.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1)
+                        }
+                        Spacer()
+                        HoverButton(title: "Remove", icon: "trash", tone: .danger) { state.removeProvider(p.id) }
                     }
-                    .menuStyle(.borderlessButton).fixedSize()
+                    .padding(.horizontal, 12).frame(height: 46)
+                }
+                ForEach(Array(state.addableProviders.enumerated()), id: \.1) { i, k in
+                    if i > 0 || !state.providers.isEmpty { Hairline() }
+                    Row(icon: k == .cursor ? "cursorarrow" : "terminal", label: "Track \(k.name)") {
+                        HoverButton(title: "Add", icon: "plus") { state.addProvider(k) }
+                    }
                 }
             }
 

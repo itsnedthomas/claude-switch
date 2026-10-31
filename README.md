@@ -6,7 +6,8 @@
 
 <p align="center">
   Run more than one Claude plan from your Mac's menu bar.<br>
-  See every account's limits, switch the live login in one click, and let it switch and start your 5-hour windows for you.
+  See every plan's weekly limit, switch the live login in one click, and let it switch for you.<br>
+  Track your Cursor and Codex usage beside it.
 </p>
 
 <p align="center">
@@ -16,12 +17,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/tour.gif" width="640" alt="Claude Switch: accounts, usage, schedule and settings">
+  <img src="docs/media/tour.gif" width="640" alt="Claude Switch: accounts, usage and settings">
 </p>
 
 ## Why
 
-If you use Claude Code all day on two Max (or Pro) plans, you hit a 5-hour limit on one and have to log out, log in again in the browser, and lose your flow. Claude Switch keeps every account signed in and swaps which one Claude Code uses, in about a second, for every Claude Code session on your Mac at once: terminals, IDEs, Conductor workspaces.
+If you use Claude Code all day on two or more Max (or Pro) plans, you hit the weekly limit on one and have to log out, log in again in the browser, and lose your flow. Claude Switch keeps every account signed in and swaps which one Claude Code uses, in about a second, for every Claude Code session on your Mac at once: terminals, IDEs, Conductor workspaces.
 
 ## What it does
 
@@ -33,28 +34,20 @@ If you use Claude Code all day on two Max (or Pro) plans, you hit a 5-hour limit
 <tr>
 <td>
 
-**Accounts.** Each account's 5-hour and weekly limits, the way Claude's own usage page shows them. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account.
+**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also track Cursor (its monthly included usage) or Codex (its 5-hour and weekly limits), each in a card of its own; they only show once you add them.
 
 </td>
 <td>
 
-**Usage.** Every plan's weekly limit together, against an even pace, projected to the reset. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
+**Usage.** Every plan's weekly limit on one chart, each on its own clock (plans added on different days reset on different days), projected to its reset. It tells you which plan runs out first and whether, moving between them, you'd run out of all of them before one resets. Activity is your spend at API prices, read from Claude Code's own transcripts on your Mac, as a Mon–Fri heat map or by the hour for the last 24 hours or today.
 
 </td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/media/schedule.png" alt="Schedule"></td>
 <td width="50%"><img src="docs/media/settings.png" alt="Settings"></td>
-</tr>
-<tr>
 <td>
 
-**Schedule.** Set your working hours and it plans each account's 5-hour windows across the day, staggered so a fresh window opens every 5 hours ÷ accounts. "Start sessions for me" opens each window on time with a one-token message, a random minute or two late.
-
-</td>
-<td>
-
-**Settings.** Auto-switch away from an account at a 5-hour or weekly limit you choose, and back to your default account a few random minutes after its window resets. Pictures, names, notifications, open at login.
+**Settings.** Auto-switch away from an account at a weekly limit you choose, and back to your default account a few random minutes after its week resets. Pictures, names, the tools you track, notifications, open at login.
 
 </td>
 </tr>
@@ -62,7 +55,7 @@ If you use Claude Code all day on two Max (or Pro) plans, you hit a 5-hour limit
 
 <p align="center">
   <img src="docs/media/menubar.gif" width="360" alt="The menu bar item updating on a switch"><br>
-  <sub>The menu bar shows the live account's picture, its 5-hour (top) and weekly bars, and its 5-hour %.</sub>
+  <sub>The menu bar shows the live account's picture, its weekly bar and its weekly %.</sub>
 </p>
 
 ## Install
@@ -83,15 +76,16 @@ The account Claude Code is signed in to shows up straight away. **Add account** 
 
 - **One login slot.** Every Claude Code session on your Mac reads its login from the Keychain item `Claude Code-credentials`. Claude Switch keeps each account's login in its own Keychain item (`ClaudeSwitch`) and, on a switch, puts the other one in that slot, keeping any MCP logins stored beside it. Claude Code re-reads the slot about every 30 seconds, so running sessions move over by themselves.
 - **Adding an account** runs `claude auth login` in a throwaway config folder, so the account you're on is never touched.
-- **Usage** comes from the endpoint behind Claude Code's `/usage`, about every 5 minutes per account. When Anthropic throttles it, the app backs off and, for an account already inside a window, reads the same figures from a one-token reply's rate-limit headers.
+- **Usage** comes from the endpoint behind Claude Code's `/usage`, about every 5 minutes per account. When Anthropic throttles it, the app backs off and, for the live account, reads the same figure from a one-token reply's rate-limit headers.
 - **Tokens.** Logins never leave your Keychain. The app refreshes the token of an account that isn't live; the live one is left to Claude Code.
+- **Cursor and Codex** are read from the apps' own logins on your Mac: Cursor's session in its local storage, Codex's in `~/.codex/auth.json`. Claude Switch only reads them and never refreshes Codex's token; if it has expired, open Codex once.
 - **Activity** is read from `~/.claude/projects` on your Mac and priced at public API rates. Nothing is uploaded.
 - An event log of every switch is kept at `~/Library/Application Support/ClaudeSwitch/events.log`.
 
 ## Good to know
 
-- The usage endpoint is undocumented and may change.
-- Auto-switching and scheduled sessions use the accounts you pay for, the way you'd use them by hand. Whether that fits your plan is between you and Anthropic's terms; both features are opt-in.
+- The usage endpoints (Claude's, Cursor's and Codex's) are undocumented and may change.
+- Auto-switching uses the accounts you pay for, the way you'd use them by hand. Whether that fits your plan is between you and Anthropic's terms; it's opt-in.
 - Not affiliated with or endorsed by Anthropic. "Claude" and the Claude mark are Anthropic's.
 
 ## Development
