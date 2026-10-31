@@ -5,32 +5,32 @@ import SwiftUI
 /// True when run with --snapshot or --scan: no menu bar item, no network.
 let isTool = ["--snapshot", "--scan", "--film"].contains { CommandLine.arguments.contains($0) }
 
-/// Two bars for the live account: 5-hour on top, weekly below. Each is outlined to
-/// its full length, so you can see how much is left.
-func usageBars(five: Double?, week: Double?) -> NSImage {
+/// The live account's weekly bar, outlined to its full length so you can see how much is left.
+func weekBar(_ pct: Double?, x: CGFloat, y: CGFloat, ink: NSColor) {
+    let track = NSRect(x: x, y: y, width: 17.5, height: 6)
+    ink.setStroke()
+    let outline = NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3)
+    outline.lineWidth = 1
+    outline.stroke()
+    let w = 17.5 * CGFloat(min(max(pct ?? 0, 0), 100) / 100)
+    if w > 0 {
+        ink.setFill()
+        NSBezierPath(roundedRect: NSRect(x: x, y: y, width: max(w, 6), height: 6), xRadius: 3, yRadius: 3).fill()
+    }
+}
+
+func usageBars(week: Double?) -> NSImage {
     let img = NSImage(size: NSSize(width: 19, height: 14), flipped: false) { _ in
-        for (i, pct) in [five, week].enumerated() {
-            let y: CGFloat = i == 0 ? 8 : 1.5
-            let track = NSRect(x: 0.75, y: y, width: 17.5, height: 4.5)
-            NSColor.black.setStroke()
-            let outline = NSBezierPath(roundedRect: track, xRadius: 2.25, yRadius: 2.25)
-            outline.lineWidth = 1
-            outline.stroke()
-            let w = 17.5 * CGFloat(min(max(pct ?? 0, 0), 100) / 100)
-            if w > 0 {
-                NSColor.black.setFill()
-                NSBezierPath(roundedRect: NSRect(x: 0.75, y: y, width: max(w, 4.5), height: 4.5), xRadius: 2.25, yRadius: 2.25).fill()
-            }
-        }
+        weekBar(week, x: 0.75, y: 4, ink: .black)
         return true
     }
     img.isTemplate = true
     return img
 }
 
-/// The live account's round picture, then its two bars. The bars follow the menu
+/// The live account's round picture, then its weekly bar. The bar follows the menu
 /// bar's text colour (drawn at display time), the picture keeps its colours.
-func menuBarImage(photo: NSImage, five: Double?, week: Double?) -> NSImage {
+func menuBarImage(photo: NSImage, week: Double?) -> NSImage {
     let img = NSImage(size: NSSize(width: 16 + 5 + 19, height: 16), flipped: false) { _ in
         let circle = NSRect(x: 0, y: 0, width: 16, height: 16)
         NSGraphicsContext.saveGraphicsState()
@@ -38,20 +38,7 @@ func menuBarImage(photo: NSImage, five: Double?, week: Double?) -> NSImage {
         NSColor.white.setFill(); circle.fill()
         photo.draw(in: circle)
         NSGraphicsContext.restoreGraphicsState()
-        let ink = NSColor.labelColor
-        for (i, pct) in [five, week].enumerated() {
-            let y: CGFloat = i == 0 ? 9 : 2.5
-            let track = NSRect(x: 21.75, y: y, width: 17.5, height: 4.5)
-            ink.setStroke()
-            let outline = NSBezierPath(roundedRect: track, xRadius: 2.25, yRadius: 2.25)
-            outline.lineWidth = 1
-            outline.stroke()
-            let w = 17.5 * CGFloat(min(max(pct ?? 0, 0), 100) / 100)
-            if w > 0 {
-                ink.setFill()
-                NSBezierPath(roundedRect: NSRect(x: 21.75, y: y, width: max(w, 4.5), height: 4.5), xRadius: 2.25, yRadius: 2.25).fill()
-            }
-        }
+        weekBar(week, x: 21.75, y: 5, ink: .labelColor)
         return true
     }
     img.isTemplate = false
@@ -245,29 +232,27 @@ final class PanelController: NSObject {
     }
 
     // What the menu bar shows right now, and where it's easing to.
-    private var shownFive: Double?
     private var shownWeek: Double?
-    private var target: (five: Double?, week: Double?, name: String)?
+    private var target: (week: Double?, name: String)?
     private var ticker: Timer?
     private var drawnAvatars = -1
 
-    /// The bars, then the live account's first name and 5-hour %. When the numbers
-    /// change (a switch, a refresh) the bars slide and the % counts up or down.
+    /// The bar, then the live account's first name and weekly %. When the number
+    /// changes (a switch, a refresh) the bar slides and the % counts up or down.
     private func updateButton() {
         let u = state.activeID.flatMap { state.usage[$0] }
         // With a picture set, the picture says whose account it is; otherwise the first name.
         let hasPhoto = state.activeID.flatMap { state.avatar($0) } != nil
         let name = state.accounts.count > 1 && !hasPhoto ? state.active.map { String($0.label.split(separator: " ").first ?? "") + " " } ?? "" : ""
-        let next = (five: u?.fiveHour?.percent, week: u?.weekly?.percent, name: name + (state.activeID ?? ""))
-        if let t = target, t.five == next.five, t.week == next.week, t.name == next.name, state.avatarVersion == drawnAvatars { return }
+        let next = (week: u?.weekly?.percent, name: name + (state.activeID ?? ""))
+        if let t = target, t.week == next.week, t.name == next.name, state.avatarVersion == drawnAvatars { return }
         drawnAvatars = state.avatarVersion
         target = next
-        guard let fromFive = shownFive, let toFive = next.five else {
-            shownFive = next.five; shownWeek = next.week
-            draw(five: next.five, week: next.week, name: name)
+        guard let fromWeek = shownWeek, let toWeek = next.week else {
+            shownWeek = next.week
+            draw(week: next.week, name: name)
             return
         }
-        let fromWeek = shownWeek ?? next.week ?? 0, toWeek = next.week ?? 0
         let start = Date(), duration = 0.7
         ticker?.invalidate()
         ticker = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] timer in
@@ -275,20 +260,19 @@ final class PanelController: NSObject {
                 guard let self else { timer.invalidate(); return }
                 let t = min(1, Date().timeIntervalSince(start) / duration)
                 let e = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2       // ease in-out
-                self.shownFive = fromFive + (toFive - fromFive) * e
                 self.shownWeek = fromWeek + (toWeek - fromWeek) * e
-                self.draw(five: self.shownFive, week: self.shownWeek, name: name)
+                self.draw(week: self.shownWeek, name: name)
                 if t >= 1 { timer.invalidate() }
             }
         }
     }
 
-    private func draw(five: Double?, week: Double?, name: String) {
+    private func draw(week: Double?, name: String) {
         guard let b = item.button else { return }
         let photo = state.activeID.flatMap { state.avatar($0) }
-        b.image = photo.map { menuBarImage(photo: $0, five: five, week: week) } ?? usageBars(five: five, week: week)
+        b.image = photo.map { menuBarImage(photo: $0, week: week) } ?? usageBars(week: week)
         let label = String(name.prefix(while: { $0 != " " })) + (name.contains(" ") ? " " : "")
-        let text = five.map { "\(label)\(Int($0.rounded()))%" } ?? "Claude"
+        let text = week.map { "\(label)\(Int($0.rounded()))%" } ?? "Claude"
         let title = NSAttributedString(string: " " + text, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
         if b.attributedTitle != title { b.attributedTitle = title }
     }
@@ -320,7 +304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let id = Bundle.main.bundleIdentifier {
             for other in NSRunningApplication.runningApplications(withBundleIdentifier: id) where other != .current { other.terminate() }
         }
-        controller = PanelController(state: AppState())
+        // `--demo` runs the live menu bar on made-up accounts, for trying the UI.
+        controller = PanelController(state: AppState(demo: args.contains("--demo")))
     }
 
     private func snapshot(to path: String, tab: Tab) {
