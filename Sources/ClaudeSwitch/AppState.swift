@@ -175,7 +175,10 @@ final class AppState: ObservableObject {
             loadDemo()
             return
         }
-        if let d = try? Data(contentsOf: indexURL), let a = try? JSONDecoder().decode([Account].self, from: d) { accounts = a }
+        if let d = try? Data(contentsOf: indexURL), let a = try? JSONDecoder().decode([Account].self, from: d) {
+            // Max 20x is now called Ultra.
+            accounts = a.map { var x = $0; if x.plan == "Max 20x" { x.plan = "Ultra" }; return x }
+        }
         if let d = try? Data(contentsOf: providersURL), let p = try? JSONDecoder().decode([ProviderAccount].self, from: d) { providers = p }
         samples = history.samples
         // Last known usage, so a relaunch (or a rate-limited fetch) still has numbers.
@@ -200,8 +203,8 @@ final class AppState: ObservableObject {
     /// Side project added later so its week resets on another day, a week of activity.
     private func loadDemo() {
         let now = Date()
-        let work = Account(id: "demo-work", email: "you@company.com", label: "Work", plan: "Max 20x")
-        let personal = Account(id: "demo-personal", email: "you@personal.dev", label: "Personal", plan: "Max 20x")
+        let work = Account(id: "demo-work", email: "you@company.com", label: "Work", plan: "Ultra")
+        let personal = Account(id: "demo-personal", email: "you@personal.dev", label: "Personal", plan: "Ultra")
         let side = Account(id: "demo-side", email: "you@side.studio", label: "Side project", plan: "Max 5x")
         accounts = [work, personal, side]
         let weekReset = Calendar.current.date(byAdding: .day, value: 2, to: Calendar.current.startOfDay(for: now))!.addingTimeInterval(2 * 3600)
@@ -831,7 +834,7 @@ final class AppState: ObservableObject {
 
     static func planName(_ oauth: JSON) -> String {
         let tier = oauth["rateLimitTier"] as? String ?? ""
-        if tier.hasSuffix("max_20x") { return "Max 20x" }
+        if tier.hasSuffix("max_20x") { return "Ultra" }
         if tier.hasSuffix("max_5x") { return "Max 5x" }
         switch oauth["subscriptionType"] as? String {
         case "max": return "Max"

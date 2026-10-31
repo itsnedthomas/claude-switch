@@ -7,11 +7,11 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var name: String {
         switch self {
-        case .cursor: return "Cursor"
+        case .cursor: return "Grok Bot"   // its X Subscription allowance is shared by Cursor, Grok and Grok Bot
         case .codex: return "Codex"
         }
     }
-    var brand: Brand { self == .cursor ? .cursor : .codex }
+    var brand: Brand { self == .cursor ? .grokBot : .codex }
 }
 
 /// A Cursor or Codex account signed in through Claude Switch. Its login lives in
