@@ -97,8 +97,11 @@ final class AppState: ObservableObject {
     @Published var login: LoginSession?
     @Published var loginURL: URL?
     @Published var plan: Plan?
-    /// Cursor and Codex logins shown under the Claude plans, one of each at most.
+    /// Cursor and Codex accounts shown under the Claude plans, as many of each as you like.
     @Published var providers: [ProviderAccount] = []
+    /// The tool being signed in to in the browser right now.
+    @Published var providerSignIn: ProviderKind?
+    private var providerSignInTask: Task<Void, Never>?
     @Published var providerUsage: [String: ProviderUsage] = [:]
     @Published var providerErrors: [String: String] = [:]
     private var providerNext: [String: Date] = [:]
@@ -215,13 +218,13 @@ final class AppState: ObservableObject {
         switchAtWeek = 95
         returnMax = 5
         notificationsOn = true
-        providers = [ProviderAccount(kind: .cursor, email: "you@company.com", plan: "Pro"),
-                     ProviderAccount(kind: .codex, email: "you@personal.dev", plan: "Plus")]
+        providers = [ProviderAccount(id: "demo-cursor", kind: .cursor, email: "you@company.com", label: "Work", plan: "Pro"),
+                     ProviderAccount(id: "demo-codex", kind: .codex, email: "you@personal.dev", label: "Personal", plan: "Plus")]
         providerUsage = [
-            "cursor": ProviderUsage(windows: [ProviderWindow(title: "Monthly", icon: "calendar",
+            "demo-cursor": ProviderUsage(windows: [ProviderWindow(title: "Monthly", icon: "calendar",
                                                              window: Window(percent: 37, resetsAt: now.addingTimeInterval(19 * 86_400)), length: 30 * 86_400, note: nil)],
                                     plan: "Pro", fetchedAt: now),
-            "codex": ProviderUsage(windows: [ProviderWindow(title: "5-hour", icon: "clock", window: Window(percent: 22, resetsAt: now.addingTimeInterval(3 * 3600)), length: 5 * 3600, note: nil),
+            "demo-codex": ProviderUsage(windows: [ProviderWindow(title: "5-hour", icon: "clock", window: Window(percent: 22, resetsAt: now.addingTimeInterval(3 * 3600)), length: 5 * 3600, note: nil),
                                              ProviderWindow(title: "Weekly", icon: "calendar", window: Window(percent: 48, resetsAt: now.addingTimeInterval(4 * 86_400)), length: 7 * 86_400, note: nil)],
                                    plan: "Plus", fetchedAt: now),
         ]
@@ -334,31 +337,72 @@ final class AppState: ObservableObject {
         login?.cancel()
     }
 
-    /// Kinds that are signed in on this Mac and not added yet.
-    var addableProviders: [ProviderKind] {
-        ProviderKind.allCases.filter { k in !providers.contains { $0.kind == k } }
+    /// Signs a Cursor or Codex account in through the browser. Signing in to one
+    /// that's already here, or to `replacing` (a row that lost its login), updates it.
+    func signInProvider(_ kind: ProviderKind, replacing: String? = nil) {
+        guard providerSignIn == nil, login == nil else { return }
+        providerSignIn = kind
+        providerSignInTask = Task {
+            defer { providerSignIn = nil; providerSignInTask = nil }
+            do {
+                let l = try await Providers.signIn(kind) { url in NSWorkspace.shared.open(url) }
+                NSApp.activate(ignoringOtherApps: true)
+                addProvider(kind, l, replacing: replacing)
+            } catch is CancellationError {
+            } catch {
+                status = "Couldn't sign in to \(kind.name): \(error.localizedDescription)"
+            }
+        }
     }
 
-    /// Adds the Cursor or Codex login already on this Mac. Nothing to sign in to here:
-    /// each app keeps its own login and we only read it.
-    func addProvider(_ kind: ProviderKind) {
-        guard !providers.contains(where: { $0.kind == kind }) else { return }
-        guard let p = Providers.detect(kind) else {
-            status = kind == .cursor ? "Sign in to the Cursor app first" : "Sign in to Codex with ChatGPT first"
-            return
+    func cancelProviderSignIn() {
+        providerSignInTask?.cancel()
+    }
+
+    private func addProvider(_ kind: ProviderKind, _ l: ProviderLogin, replacing: String?) {
+        let key = "\(l.email ?? ""):\(l.accountID ?? "")"
+        let id = kind.rawValue + "-" + SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(10)
+        let email = l.email ?? ""
+        Providers.save(l, for: id)
+        let old = providers.first { $0.id == id } ?? replacing.flatMap { r in providers.first { $0.id == r } }
+        // A name you gave it survives signing in again.
+        let named = old.map { $0.label != $0.email && $0.label != kind.name } ?? false
+        let p = ProviderAccount(id: id, kind: kind, email: email,
+                                label: named ? old!.label : (l.name ?? (email.isEmpty ? kind.name : email)),
+                                plan: l.plan.map(Providers.capitalised) ?? old?.plan ?? "")
+        if let old, let i = providers.firstIndex(where: { $0.id == old.id }) {
+            if old.id != id { forgetProvider(old.id) }
+            providers[i] = p
+        } else {
+            providers.append(p)
         }
-        providers.append(p)
         saveProviders()
-        status = "Added \(kind.name)"
-        providerNext[p.id] = nil
+        status = "Added \(p.label)"
+        providerErrors[id] = nil
+        providerNext[id] = nil
         Task { await refreshProviders(force: true) }
     }
 
+    func renameProvider(_ id: String, to label: String) {
+        guard let i = providers.firstIndex(where: { $0.id == id }) else { return }
+        let t = label.trimmingCharacters(in: .whitespaces)
+        providers[i].label = t.isEmpty ? (providers[i].email.isEmpty ? providers[i].kind.name : providers[i].email) : t
+        saveProviders()
+    }
+
     func removeProvider(_ id: String) {
+        forgetProvider(id)
         providers.removeAll { $0.id == id }
+        saveProviders()
+    }
+
+    /// Drops a provider's login, picture and readings.
+    private func forgetProvider(_ id: String) {
+        Keychain.delete(Providers.service, account: id)
+        try? FileManager.default.removeItem(at: avatarDir.appendingPathComponent("\(id).png"))
+        avatarCache[id] = nil
         providerUsage[id] = nil
         providerErrors[id] = nil
-        saveProviders()
     }
 
     /// Each provider about every 5 minutes; `force` (the refresh button) fetches all.
@@ -368,7 +412,7 @@ final class AppState: ObservableObject {
         for p in providers where force || (providerNext[p.id] ?? .distantPast) <= now {
             providerNext[p.id] = now.addingTimeInterval(.random(in: 270...330))
             do {
-                let u = try await Providers.usage(p.kind)
+                let u = try await Providers.usage(p)
                 providerUsage[p.id] = u
                 providerErrors[p.id] = nil
                 if let plan = u.plan, let i = providers.firstIndex(where: { $0.id == p.id }), providers[i].plan != plan {

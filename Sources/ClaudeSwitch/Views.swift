@@ -239,7 +239,7 @@ struct AccountsTab: View {
                     .font(Theme.caption).foregroundStyle(Theme.muted)
             } else {
                 Box {
-                    if !state.providers.isEmpty { CardHeader(icon: "sparkle", title: "Claude"); Hairline() }
+                    if !state.providers.isEmpty { CardHeader(brand: .claude, title: "Claude"); Hairline() }
                     ForEach(Array(state.accounts.enumerated()), id: \.1.id) { i, acct in
                         if i > 0 { Hairline() }
                         AccountRow(account: acct, ns: ns)
@@ -247,7 +247,10 @@ struct AccountsTab: View {
                 }
                 .animation(.snappy(duration: 0.4), value: state.activeID)
             }
-            ForEach(state.providers) { p in ProviderCard(provider: p) }
+            ForEach(ProviderKind.allCases) { k in
+                let ps = state.providers.filter { $0.kind == k }
+                if !ps.isEmpty { ProviderCard(kind: k, accounts: ps) }
+            }
             Footer()
         }
     }
@@ -265,6 +268,11 @@ struct Footer: View {
                 Text("Sign in with your other account in the browser").foregroundStyle(Theme.ink)
                 Spacer(minLength: 4)
                 HoverLink(icon: "xmark", text: "Cancel", tone: .danger, rest: Theme.subtle) { state.cancelLogin() }
+            } else if let k = state.providerSignIn {
+                ProgressView().controlSize(.mini)
+                Text("Sign in to \(k.name) in the browser").foregroundStyle(Theme.ink)
+                Spacer(minLength: 4)
+                HoverLink(icon: "xmark", text: "Cancel", tone: .danger, rest: Theme.subtle) { state.cancelProviderSignIn() }
             } else {
                 AddAccountMenu()
                 Spacer(minLength: 8)
@@ -293,19 +301,23 @@ struct Footer: View {
 /// An account's picture, or its initial. A set picture keeps a faint ring.
 struct Avatar: View {
     @EnvironmentObject var state: AppState
-    let account: Account
+    let id: String
+    let label: String
     var size: CGFloat = 28
+
+    init(id: String, label: String, size: CGFloat = 28) { (self.id, self.label, self.size) = (id, label, size) }
+    init(account: Account, size: CGFloat = 28) { self.init(id: account.id, label: account.label, size: size) }
 
     var body: some View {
         let _ = state.avatarVersion
         Group {
-            if let img = state.avatar(account.id) {
+            if let img = state.avatar(id) {
                 Image(nsImage: img).resizable().scaledToFill()
                     .frame(width: size, height: size).background(.white).clipShape(Circle())
                     .overlay(Circle().strokeBorder(Theme.line))
             } else {
                 Circle().fill(Theme.accent.opacity(0.12))
-                    .overlay(Text(account.label.prefix(1).uppercased())
+                    .overlay(Text(label.prefix(1).uppercased())
                         .font(.system(size: size * 0.45, weight: .semibold)).foregroundStyle(Theme.accent))
             }
         }
@@ -349,81 +361,104 @@ struct AccountRow: View {
     }
 }
 
-/// "Add account": straight to Claude's sign-in, or a menu of Claude and whichever
-/// of Cursor and Codex aren't added yet.
+/// "Add account": a Claude account, or a Cursor or Codex one to track.
 struct AddAccountMenu: View {
     @EnvironmentObject var state: AppState
     @State private var hover = false
 
     var body: some View {
-        if state.addableProviders.isEmpty {
-            HoverLink(icon: "plus", text: "Add account") { state.addAccount() }
-        } else {
-            Menu {
-                Button("Claude account") { state.addAccount() }
-                Section("Track another tool") {
-                    ForEach(state.addableProviders) { k in Button(k.name) { state.addProvider(k) } }
+        Menu {
+            Button { state.addAccount() } label: { Label { Text("Claude account") } icon: { Image(nsImage: Brand.claude.image) } }
+            Section("Track another tool") {
+                ForEach(ProviderKind.allCases) { k in
+                    Button { state.signInProvider(k) } label: { Label { Text("\(k.name) account") } icon: { Image(nsImage: k.brand.image) } }
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).frame(width: 12)
-                    Text("Add account")
-                }
-                .foregroundStyle(hover ? Theme.accent : Theme.muted)
             }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .onHover { h in withAnimation(.easeOut(duration: 0.18)) { hover = h } }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .semibold)).frame(width: 12)
+                Text("Add account")
+            }
+            .foregroundStyle(hover ? Theme.accent : Theme.muted)
         }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .onHover { h in withAnimation(.easeOut(duration: 0.18)) { hover = h } }
     }
 }
 
 /// A card's title line, for when Claude shares the tab with other tools.
 struct CardHeader: View {
-    let icon: String
+    let brand: Brand
     let title: String
-    var subtitle: String = ""
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.subtle).frame(width: 14)
+        HStack(spacing: 7) {
+            BrandMark(brand: brand, size: 13).frame(width: 14)
             Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
             Spacer(minLength: 6)
-            if !subtitle.isEmpty { Text(subtitle).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
 }
 
-/// A Cursor or Codex login: its own card, with one bar per limit it reports.
+/// Every Cursor or every Codex account, in one card under the tool's logo.
 struct ProviderCard: View {
+    let kind: ProviderKind
+    let accounts: [ProviderAccount]
+
+    var body: some View {
+        Box {
+            CardHeader(brand: kind.brand, title: kind.name)
+            ForEach(accounts) { p in
+                Hairline()
+                ProviderRow(provider: p)
+            }
+        }
+    }
+}
+
+/// A Cursor or Codex account, laid out like a Claude one: picture, name, plan,
+/// and one bar per limit it reports.
+struct ProviderRow: View {
     @EnvironmentObject var state: AppState
     let provider: ProviderAccount
     @State private var hovering = false
 
     var body: some View {
         let u = state.providerUsage[provider.id]
-        Box {
-            CardHeader(icon: provider.kind == .cursor ? "cursorarrow" : "terminal", title: provider.kind.name,
-                       subtitle: [provider.email, provider.plan].filter { !$0.isEmpty }.joined(separator: " · "))
-            Hairline()
-            VStack(alignment: .leading, spacing: 8) {
-                if let u, !u.windows.isEmpty {
-                    HStack(alignment: .top, spacing: 18) {
-                        ForEach(Array(u.windows.enumerated()), id: \.offset) { _, w in
-                            UsageBlock(icon: w.icon, title: w.title, window: w.window, length: w.length, hovering: $hovering)
-                        }
-                    }
-                    let notes = u.windows.compactMap(\.note)
-                    if !notes.isEmpty { Text(notes.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
-                } else if state.providerErrors[provider.id] == nil {
-                    Text(u == nil ? "Reading usage…" : "No limits reported").font(Theme.micro).foregroundStyle(Theme.subtle)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Avatar(id: provider.id, label: provider.label)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(provider.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
+                    let sub = [provider.label == provider.email ? "" : provider.email, provider.plan].filter { !$0.isEmpty }
+                    if !sub.isEmpty { Text(sub.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
                 }
-                if let e = state.providerErrors[provider.id] {
+                Spacer()
+            }
+            if let u, !u.windows.isEmpty {
+                HStack(alignment: .top, spacing: 18) {
+                    ForEach(Array(u.windows.enumerated()), id: \.offset) { _, w in
+                        UsageBlock(icon: w.icon, title: w.title, window: w.window, length: w.length, hovering: $hovering)
+                    }
+                }
+                let notes = u.windows.compactMap(\.note)
+                if !notes.isEmpty { Text(notes.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1) }
+            } else if state.providerErrors[provider.id] == nil {
+                Text(u == nil ? "Reading usage…" : "No limits reported").font(Theme.micro).foregroundStyle(Theme.subtle)
+            }
+            if let e = state.providerErrors[provider.id] {
+                HStack(spacing: 6) {
                     Text(e).font(Theme.micro).foregroundStyle(Theme.warnInk).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if e == Providers.signedOut {
+                        HoverLink(icon: "arrow.up.right", text: "Sign in") { state.signInProvider(provider.kind, replacing: provider.id) }
+                            .font(Theme.micro)
+                    }
                 }
             }
-            .padding(12)
         }
+        .padding(12)
         .zIndex(hovering ? 1 : 0)
     }
 }
@@ -898,25 +933,26 @@ struct SettingsTab: View {
 
             SectionTitle(text: "Other tools").padding(.top, 6)
             Box {
-                ForEach(Array(state.providers.enumerated()), id: \.1.id) { i, p in
+                ForEach(state.providers) { p in
+                    ProfileSettingsRow(id: p.id, label: p.label, detail: [p.email, p.plan], badge: p.kind.brand,
+                                       rename: { state.renameProvider(p.id, to: $0) }, remove: { state.removeProvider(p.id) })
+                    Hairline()
+                }
+                ForEach(Array(ProviderKind.allCases.enumerated()), id: \.1) { i, k in
                     if i > 0 { Hairline() }
                     HStack(spacing: 10) {
-                        Image(systemName: p.kind == .cursor ? "cursorarrow" : "terminal")
-                            .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.subtle).frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(p.kind.name).font(Theme.body).foregroundStyle(Theme.ink)
-                            Text([p.email, p.plan].filter { !$0.isEmpty }.joined(separator: " · ")).font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1)
+                        BrandMark(brand: k.brand, size: 14).frame(width: 16)
+                        if state.providerSignIn == k {
+                            Text("Sign in to \(k.name) in the browser").font(Theme.caption).foregroundStyle(Theme.ink).lineLimit(1)
+                            Spacer()
+                            HoverButton(title: "Cancel", icon: "xmark", tone: .danger) { state.cancelProviderSignIn() }
+                        } else {
+                            Text("Add \(k.name) account").font(Theme.body).foregroundStyle(Theme.ink)
+                            Spacer()
+                            HoverButton(title: "Sign in", icon: "arrow.up.right") { state.signInProvider(k) }
                         }
-                        Spacer()
-                        HoverButton(title: "Remove", icon: "trash", tone: .danger) { state.removeProvider(p.id) }
                     }
-                    .padding(.horizontal, 12).frame(height: 46)
-                }
-                ForEach(Array(state.addableProviders.enumerated()), id: \.1) { i, k in
-                    if i > 0 || !state.providers.isEmpty { Hairline() }
-                    Row(icon: k == .cursor ? "cursorarrow" : "terminal", label: "Track \(k.name)") {
-                        HoverButton(title: "Add", icon: "plus") { state.addProvider(k) }
-                    }
+                    .padding(.horizontal, 12).frame(height: 38)
                 }
             }
 
@@ -934,23 +970,47 @@ struct SettingsTab: View {
     }
 }
 
-/// Picture (click or drop an image to change it), name (click to rename),
-/// email and plan, and Remove for any account that isn't the live one.
+/// A Claude account's settings row.
 struct AccountSettingsRow: View {
     @EnvironmentObject var state: AppState
     let account: Account
+
+    var body: some View {
+        ProfileSettingsRow(id: account.id, label: account.label, detail: [account.email, account.plan],
+                           rename: { state.rename(account.id, to: $0) },
+                           remove: state.activeID == account.id ? nil : { state.remove(account.id) })
+    }
+}
+
+/// Picture (click or drop an image to change it), name (click to rename),
+/// email and plan, and Remove when `remove` is given. `badge` marks the tool.
+struct ProfileSettingsRow: View {
+    @EnvironmentObject var state: AppState
+    let id: String
+    let label: String
+    let detail: [String]
+    var badge: Brand?
+    let rename: (String) -> Void
+    let remove: (() -> Void)?
     @State private var editing = false
     @State private var draft = ""
     @State private var hoverPic = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Button { state.pickAvatar(account.id) } label: {
-                Avatar(account: account, size: 30)
+            Button { state.pickAvatar(id) } label: {
+                Avatar(id: id, label: label, size: 30)
                     .overlay {
                         if hoverPic {
                             Circle().fill(.black.opacity(0.35))
                                 .overlay(Image(systemName: "pencil").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white))
+                        }
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        if let badge {
+                            BrandMark(brand: badge, size: 9).padding(2.5)
+                                .background(Circle().fill(Theme.surface)).overlay(Circle().strokeBorder(Theme.line))
+                                .offset(x: 3, y: 3)
                         }
                     }
             }
@@ -959,7 +1019,7 @@ struct AccountSettingsRow: View {
             .help("Change picture (or drop an image here)")
             .dropDestination(for: URL.self) { urls, _ in
                 guard let u = urls.first else { return false }
-                state.setAvatar(account.id, from: u)
+                state.setAvatar(id, from: u)
                 return true
             }
             VStack(alignment: .leading, spacing: 1) {
@@ -970,19 +1030,19 @@ struct AccountSettingsRow: View {
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line))
                         .frame(maxWidth: 170)
-                        .onSubmit { state.rename(account.id, to: draft); editing = false }
+                        .onSubmit { rename(draft); editing = false }
                         .onExitCommand { editing = false }
                 } else {
-                    Text(account.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
-                        .onTapGesture { draft = account.label; editing = true }
+                    Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
+                        .onTapGesture { draft = label; editing = true }
                         .help("Click to rename")
                 }
-                Text([account.email, account.plan].filter { !$0.isEmpty }.joined(separator: " · "))
+                Text(detail.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(Theme.micro).foregroundStyle(Theme.subtle).lineLimit(1)
             }
             Spacer()
-            if state.activeID != account.id {
-                HoverButton(title: "Remove", icon: "trash", tone: .danger) { state.remove(account.id) }
+            if let remove {
+                HoverButton(title: "Remove", icon: "trash", tone: .danger) { remove() }
             }
         }
         .padding(.horizontal, 12).frame(height: 50)

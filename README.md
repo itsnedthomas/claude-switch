@@ -34,7 +34,7 @@ If you use Claude Code all day on two or more Max (or Pro) plans, you hit the we
 <tr>
 <td>
 
-**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also track Cursor (its monthly included usage) or Codex (its 5-hour and weekly limits), each in a card of its own; they only show once you add them.
+**Accounts.** Each account's weekly limit, the way Claude's own usage page shows it. Bars are blue, orange when an account is on course to run close, red when it's on course to run out. Hover for the reset date and when it runs out at this pace. One click on **Switch** moves every Claude Code session to that account. **Add account** can also sign in Cursor accounts (monthly usage, plus the weekly allowance an X Subscription shares with Grok) and Codex accounts (its 5-hour and weekly limits), as many of each as you like, each tool in a card of its own; they only show once you add one.
 
 </td>
 <td>
@@ -78,7 +78,7 @@ The account Claude Code is signed in to shows up straight away. **Add account** 
 - **Adding an account** runs `claude auth login` in a throwaway config folder, so the account you're on is never touched.
 - **Usage** comes from the endpoint behind Claude Code's `/usage`, about every 5 minutes per account. When Anthropic throttles it, the app backs off and, for the live account, reads the same figure from a one-token reply's rate-limit headers.
 - **Tokens.** Logins never leave your Keychain. The app refreshes the token of an account that isn't live; the live one is left to Claude Code.
-- **Cursor and Codex** are read from the apps' own logins on your Mac: Cursor's session in its local storage, Codex's in `~/.codex/auth.json`. Claude Switch only reads them and never refreshes Codex's token; if it has expired, open Codex once.
+- **Cursor and Codex** sign in through their own pages in your browser (Cursor's login, which offers Grok and X; ChatGPT for Codex), so you choose the account. Claude Switch keeps those logins in your Keychain, refreshes them itself, and never touches the Cursor app's or Codex CLI's own login.
 - **Activity** is read from `~/.claude/projects` on your Mac and priced at public API rates. Nothing is uploaded.
 - An event log of every switch is kept at `~/Library/Application Support/ClaudeSwitch/events.log`.
 

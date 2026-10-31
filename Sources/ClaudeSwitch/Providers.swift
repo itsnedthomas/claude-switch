@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 
 /// Other AI tools whose plan limits we show next to Claude's.
 enum ProviderKind: String, Codable, CaseIterable, Identifiable {
@@ -12,13 +11,32 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable {
         case .codex: return "Codex"
         }
     }
+    var brand: Brand { self == .cursor ? .cursor : .codex }
 }
 
+/// A Cursor or Codex account signed in through Claude Switch. Its login lives in
+/// the Keychain under `id`.
 struct ProviderAccount: Codable, Identifiable, Equatable {
+    var id: String
     var kind: ProviderKind
     var email: String
+    var label: String
     var plan: String
-    var id: String { kind.rawValue }
+
+    init(id: String, kind: ProviderKind, email: String, label: String, plan: String) {
+        (self.id, self.kind, self.email, self.label, self.plan) = (id, kind, email, label, plan)
+    }
+
+    /// Entries from before sign-in had no id or name: they keep the kind as id
+    /// and, having no login, ask to be signed in again.
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(ProviderKind.self, forKey: .kind)
+        email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+        plan = try c.decodeIfPresent(String.self, forKey: .plan) ?? ""
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? kind.rawValue
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? (email.isEmpty ? kind.name : email)
+    }
 }
 
 /// One limit a provider reports, shown like Claude's weekly bar.
@@ -38,52 +56,73 @@ struct ProviderUsage: Codable, Equatable {
     var fetchedAt: Date
 }
 
-/// Reads the logins Cursor and Codex already keep on this Mac. Never refreshes
-/// or writes them: each app owns its own login.
+/// Usage for the Cursor and Codex logins Claude Switch signed in itself. Each
+/// login is refreshed here when it's about to expire or the server turns it down.
 enum Providers {
-    /// The login this Mac's Cursor app / Codex CLI is signed in with, or nil if none.
-    static func detect(_ kind: ProviderKind) -> ProviderAccount? {
+    static let service = "ClaudeSwitch-provider"
+    static let signedOut = "Signed out. Sign in again"
+
+    static func login(_ id: String) -> ProviderLogin? {
+        Keychain.read(service, account: id).flatMap { try? JSONDecoder().decode(ProviderLogin.self, from: Data($0.utf8)) }
+    }
+
+    static func save(_ login: ProviderLogin, for id: String) {
+        guard let d = try? JSONEncoder().encode(login) else { return }
+        Keychain.write(service, account: id, value: String(decoding: d, as: UTF8.self))
+    }
+
+    static func signIn(_ kind: ProviderKind, open: @escaping (URL) -> Void) async throws -> ProviderLogin {
         switch kind {
-        case .cursor:
-            guard let a = Cursor.auth() else { return nil }
-            return ProviderAccount(kind: .cursor, email: a.email ?? "", plan: a.plan.map(capitalised) ?? "")
-        case .codex:
-            guard let a = Codex.auth() else { return nil }
-            return ProviderAccount(kind: .codex, email: a.email ?? "", plan: a.plan.map(capitalised) ?? "")
+        case .cursor: return try await CursorAuth.signIn(open: open)
+        case .codex: return try await CodexAuth.signIn(open: open)
         }
     }
 
-    static func usage(_ kind: ProviderKind) async throws -> ProviderUsage {
+    static func usage(_ p: ProviderAccount) async throws -> ProviderUsage {
+        guard var l = login(p.id) else { throw APIError.bad(signedOut) }
+        if let exp = l.expires, exp < Date().addingTimeInterval(300) { l = try await renew(l, p) }
+        do {
+            return try await read(p.kind, l)
+        } catch APIError.bad(let m) where m == signedOut {
+            return try await read(p.kind, renew(l, p))
+        }
+    }
+
+    private static func renew(_ l: ProviderLogin, _ p: ProviderAccount) async throws -> ProviderLogin {
+        guard l.refresh != nil else { throw APIError.bad(signedOut) }
+        let n: ProviderLogin
+        do {
+            n = try await p.kind == .cursor ? CursorAuth.refresh(l) : CodexAuth.refresh(l)
+        } catch let e where e is CancellationError || e is URLError {
+            throw e
+        } catch {
+            throw APIError.bad(signedOut)
+        }
+        save(n, for: p.id)
+        return n
+    }
+
+    private static func read(_ kind: ProviderKind, _ l: ProviderLogin) async throws -> ProviderUsage {
         switch kind {
-        case .cursor: return try await Cursor.usage()
-        case .codex: return try await Codex.usage()
+        case .cursor: return try await Cursor.usage(l)
+        case .codex: return try await Codex.usage(l)
         }
     }
 
     // MARK: Cursor
 
     enum Cursor {
-        static let db = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         static let url = URL(string: "https://cursor.com/api/usage-summary")!
 
-        struct Auth { var token: String; var userID: String; var email: String?; var plan: String? }
+        static let poolURL = URL(string: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus")!
 
-        static func auth() -> Auth? {
-            let keys = ["cursorAuth/accessToken", "cursorAuth/cachedEmail", "cursorAuth/stripeMembershipType"]
-            guard let rows = readItems(keys), let token = rows[keys[0]], !token.isEmpty,
-                  let sub = jwtPayload(token)?["sub"] as? String,
-                  let userID = sub.split(separator: "|").last.map(String.init), !userID.isEmpty else { return nil }
-            return Auth(token: token, userID: userID, email: rows[keys[1]], plan: rows[keys[2]])
-        }
-
-        static func usage() async throws -> ProviderUsage {
-            guard let a = auth() else { throw APIError.bad("Sign in to Cursor first") }
+        static func usage(_ l: ProviderLogin) async throws -> ProviderUsage {
+            async let shared = pool(l)
             var req = URLRequest(url: url, timeoutInterval: 15)
-            req.setValue("WorkosCursorSessionToken=\(a.userID)%3A%3A\(a.token)", forHTTPHeaderField: "Cookie")
+            req.setValue(CursorAuth.cookie(l), forHTTPHeaderField: "Cookie")
             req.setValue(browserUA, forHTTPHeaderField: "User-Agent")
             req.setValue("application/json", forHTTPHeaderField: "Accept")
-            let j = try await fetch(req, signedOut: "Open Cursor and sign in again")
+            let j = try await fetch(req, signedOut: signedOut)
 
             let start = (j["billingCycleStart"] as? String).flatMap(parseISO)
             let end = (j["billingCycleEnd"] as? String).flatMap(parseISO)
@@ -102,39 +141,28 @@ enum Providers {
             let w = ProviderWindow(title: "Monthly", icon: "calendar",
                                    window: Window(percent: min(max(pct ?? 0, 0), 100), resetsAt: end),
                                    length: length, note: note)
-            return ProviderUsage(windows: [w], plan: (j["membershipType"] as? String).map(capitalised), fetchedAt: Date())
+            let pool = await shared
+            return ProviderUsage(windows: [w] + (pool.map { [$0.window] } ?? []),
+                                 plan: pool?.plan ?? (j["membershipType"] as? String).map(capitalised), fetchedAt: Date())
         }
 
-        /// Opens the WAL database read-only. With Cursor closed there is no -shm file and
-        /// a plain read-only open fails, so fall back to `immutable` (nothing is writing).
-        static func open() -> OpaquePointer? {
-            for uri in [db.absoluteString + "?mode=ro", db.absoluteString + "?immutable=1"] {
-                var h: OpaquePointer?
-                if sqlite3_open_v2(uri, &h, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
-                   sqlite3_exec(h, "SELECT 1 FROM ItemTable LIMIT 1", nil, nil, nil) == SQLITE_OK { return h }
-                sqlite3_close(h)
+        /// The weekly allowance an X Subscription shares between Cursor, Grok and Grok
+        /// Bot, when the account has one. Best effort: a failure leaves the monthly bar.
+        static func pool(_ l: ProviderLogin) async -> (window: ProviderWindow, plan: String?)? {
+            var req = URLRequest(url: poolURL, timeoutInterval: 15)
+            req.httpMethod = "POST"
+            req.httpBody = Data("{}".utf8)
+            for (k, v) in ["Content-Type": "application/json", "Authorization": "Bearer \(l.access)",
+                           "Connect-Protocol-Version": "1", "x-cursor-client-type": "sand",
+                           "x-cursor-client-version": "0.1.0", "x-sand-box-namespace": "prod", "x-ghost-mode": "true"] {
+                req.setValue(v, forHTTPHeaderField: k)
             }
-            return nil
-        }
-
-        /// Values for `keys` from Cursor's VS Code state database.
-        static func readItems(_ keys: [String]) -> [String: String]? {
-            guard FileManager.default.fileExists(atPath: db.path), let h = open() else { return nil }
-            defer { sqlite3_close(h) }
-            sqlite3_busy_timeout(h, 1000)
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(h, "SELECT value FROM ItemTable WHERE key = ?", -1, &stmt, nil) == SQLITE_OK else { return nil }
-            defer { sqlite3_finalize(stmt) }
-            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-            var out: [String: String] = [:]
-            for k in keys {
-                sqlite3_reset(stmt)
-                sqlite3_bind_text(stmt, 1, k, -1, transient)
-                guard sqlite3_step(stmt) == SQLITE_ROW, let p = sqlite3_column_blob(stmt, 0) else { continue }
-                let data = Data(bytes: p, count: Int(sqlite3_column_bytes(stmt, 0)))
-                out[k] = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            return out
+            guard let j = try? await fetch(req, signedOut: signedOut),
+                  j["hasNonZeroIncludedLimit"] as? Bool == true, let pct = num(j["usagePercent"]) else { return nil }
+            let w = ProviderWindow(title: "Shared weekly", icon: "calendar",
+                                   window: Window(percent: min(max(pct, 0), 100), resetsAt: (j["nextResetTimestampUtc"] as? String).flatMap(parseISO)),
+                                   length: 7 * 86400, note: "Shared with Grok")
+            return (w, (j["cursorPlanName"] as? String).map(capitalised))
         }
     }
 
@@ -142,49 +170,18 @@ enum Providers {
 
     enum Codex {
         static let url = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
-        static let stale = "Open Codex once to refresh its login"
 
-        static var authFile: URL {
-            if let home = ProcessInfo.processInfo.environment["CODEX_HOME"], !home.isEmpty {
-                return URL(fileURLWithPath: (home as NSString).expandingTildeInPath).appendingPathComponent("auth.json")
-            }
-            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json")
-        }
-
-        struct Auth { var access: String; var accountID: String?; var email: String?; var plan: String? }
-
-        /// Re-read on every call so a refresh by Codex is picked up. API-key logins
-        /// have no plan limits, so they count as no login.
-        static func auth() -> Auth? {
-            guard let d = try? Data(contentsOf: authFile),
-                  let j = (try? JSONSerialization.jsonObject(with: d)) as? JSON,
-                  (j["auth_mode"] as? String)?.lowercased() == "chatgpt",
-                  let t = j["tokens"] as? JSON, let access = t["access_token"] as? String, !access.isEmpty else { return nil }
-            let id = (t["id_token"] as? String).flatMap(jwtPayload) ?? [:]
-            let at = jwtPayload(access) ?? [:]
-            let idAuth = id["https://api.openai.com/auth"] as? JSON ?? [:]
-            let atAuth = at["https://api.openai.com/auth"] as? JSON ?? [:]
-            let email = id["email"] as? String ?? (at["https://api.openai.com/profile"] as? JSON)?["email"] as? String
-            let plan = idAuth["chatgpt_plan_type"] as? String ?? atAuth["chatgpt_plan_type"] as? String
-            let account = t["account_id"] as? String ?? idAuth["chatgpt_account_id"] as? String
-            return Auth(access: access, accountID: account, email: email, plan: plan)
-        }
-
-        static func usage() async throws -> ProviderUsage {
-            guard let a = auth() else { throw APIError.bad("Sign in to Codex with ChatGPT first") }
-            if let exp = num(jwtPayload(a.access)?["exp"]), exp < Date().timeIntervalSince1970 {
-                throw APIError.bad(stale)
-            }
+        static func usage(_ l: ProviderLogin) async throws -> ProviderUsage {
             var req = URLRequest(url: url, timeoutInterval: 15)
-            req.setValue("Bearer \(a.access)", forHTTPHeaderField: "Authorization")
-            if let id = a.accountID { req.setValue(id, forHTTPHeaderField: "ChatGPT-Account-Id") }
+            req.setValue("Bearer \(l.access)", forHTTPHeaderField: "Authorization")
+            if let id = l.accountID { req.setValue(id, forHTTPHeaderField: "ChatGPT-Account-Id") }
             req.setValue("codex_cli_rs", forHTTPHeaderField: "User-Agent")
             req.setValue("application/json", forHTTPHeaderField: "Accept")
-            let j = try await fetch(req, signedOut: stale)
+            let j = try await fetch(req, signedOut: signedOut)
 
             let rl = j["rate_limit"] as? JSON ?? [:]
             let windows = ["primary_window", "secondary_window"].compactMap { window(rl[$0]) }
-            let plan = (j["plan_type"] as? String).map(capitalised) ?? a.plan.map(capitalised)
+            let plan = (j["plan_type"] as? String).map(capitalised) ?? l.plan
             return ProviderUsage(windows: windows, plan: plan, fetchedAt: Date())
         }
 
