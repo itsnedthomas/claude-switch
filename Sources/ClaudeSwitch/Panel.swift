@@ -236,15 +236,16 @@ final class PanelController: NSObject {
     private var target: (week: Double?, name: String)?
     private var ticker: Timer?
     private var drawnAvatars = -1
+    private var photoID: String?
 
     /// The bar, then the live account's first name and weekly %. When the number
     /// changes (a switch, a refresh) the bar slides and the % counts up or down.
     private func updateButton() {
-        let u = state.activeID.flatMap { state.usage[$0] }
-        // With a picture set, the picture says whose account it is; otherwise the first name.
-        let hasPhoto = state.activeID.flatMap { state.avatar($0) } != nil
-        let name = state.accounts.count > 1 && !hasPhoto ? state.active.map { String($0.label.split(separator: " ").first ?? "") + " " } ?? "" : ""
-        let next = (week: u?.weekly?.percent, name: name + (state.activeID ?? ""))
+        // With a picture set, the picture says whose account it is; otherwise a first name.
+        let r = state.menuBarReading()
+        photoID = r.photoID
+        let name = r.name.isEmpty ? "" : r.name + " "
+        let next = (week: r.week, name: name + (r.photoID ?? ""))
         if let t = target, t.week == next.week, t.name == next.name, state.avatarVersion == drawnAvatars { return }
         drawnAvatars = state.avatarVersion
         target = next
@@ -269,7 +270,7 @@ final class PanelController: NSObject {
 
     private func draw(week: Double?, name: String) {
         guard let b = item.button else { return }
-        let photo = state.activeID.flatMap { state.avatar($0) }
+        let photo = photoID.flatMap { state.avatar($0) }
         b.image = photo.map { menuBarImage(photo: $0, week: week) } ?? usageBars(week: week)
         let label = String(name.prefix(while: { $0 != " " })) + (name.contains(" ") ? " " : "")
         let text = week.map { "\(label)\(Int($0.rounded()))%" } ?? "Claude"

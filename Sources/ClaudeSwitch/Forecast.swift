@@ -25,6 +25,8 @@ struct WeekForecast {
     }
 
     var plans: [Plan]                   // plans with a week running
+    /// Other tools' weekly limits: drawn beside the plans, left out of the totals.
+    var extras: [Plan] = []
     var count: Int                      // every plan with a reading, started or not
     var current: Double                 // average % used across them
     var shouldBe: Double                // where even pacing would have the average now
@@ -36,46 +38,71 @@ struct WeekForecast {
 
     static let week: TimeInterval = 7 * 86_400
 
-    static func make(accounts: [(id: String, label: String)], usage: [String: Usage], samples: [Sample], now: Date = Date()) -> WeekForecast? {
+    /// Average % used across every plan at a moment, projected after now. A plan
+    /// outside its week counts as unused.
+    func combined(at d: Date, now: Date = Date()) -> Double {
+        plans.map { $0.value(at: d, now: now) ?? 0 }.reduce(0, +) / Double(max(count, 1))
+    }
+
+    /// The combined line: every reading so far, then hourly to the chart's end.
+    func combinedSeries(now: Date = Date()) -> (actual: [(Date, Double)], ahead: [(Date, Double)]) {
+        let times = Set(plans.flatMap { $0.actual.map(\.0) }).filter { $0 < now }.sorted()
+        let actual = times.map { ($0, combined(at: $0, now: now)) } + [(now, combined(at: now, now: now))]
+        var ahead = [(now, combined(at: now, now: now))]
+        var t = now
+        while t < end { t = min(t + 3600, end); ahead.append((t, combined(at: t, now: now))) }
+        return (actual, ahead)
+    }
+
+    static func make(accounts: [(id: String, label: String)], usage: [String: Usage], samples: [Sample],
+                     others: [(id: String, label: String, weekly: Window)] = [], now: Date = Date()) -> WeekForecast? {
         var plans: [Plan] = []
         var used: [Double] = [], pace: [Double] = []
         for a in accounts {
             guard let u = usage[a.id] else { continue }      // no reading yet: leave it out
-            guard let w = u.weekly, let reset = w.resetsAt, reset > now else {
+            guard let w = u.weekly, let plan = plan(a.id, a.label, w, samples: samples, now: now) else {
                 used.append(0); pace.append(0)               // its week starts when it's next used
                 continue
             }
-            let start = reset.addingTimeInterval(-week)
-            let elapsed = now.timeIntervalSince(start)
-            // Under a day in, a few busy hours would project as running out: pace it as a day.
-            let rate = w.percent / max(elapsed, 86_400)
-            var runsOut: Date?
-            if w.percent >= 100 {
-                runsOut = now
-            } else if rate > 0 {
-                let t = now.addingTimeInterval((100 - w.percent) / rate)
-                if t < reset { runsOut = t }
-            }
-            var actual: [(Date, Double)] = [(start, 0)]
-            for s in samples where s.t > start && s.t < now {
-                // A reading every 15 minutes at most keeps the chart light with several plans.
-                if let v = s.week[a.id], s.t.timeIntervalSince(actual.last!.0) >= 900 { actual.append((s.t, v)) }
-            }
-            actual.append((now, w.percent))
-            plans.append(Plan(id: a.id, label: a.label, start: start, reset: reset, current: w.percent,
-                              rate: rate, runsOut: runsOut, actual: actual))
+            plans.append(plan)
             used.append(w.percent)
-            pace.append(min(100, elapsed / week * 100))
+            pace.append(min(100, now.timeIntervalSince(plan.start) / week * 100))
         }
+        let extras = others.compactMap { plan($0.id, $0.label, $0.weekly, samples: samples, now: now) }
         guard !plans.isEmpty else { return nil }
-        let resets = plans.map(\.reset)
+        let all = plans + extras
+        let resets = all.map(\.reset)
         let end = resets.max()!
-        return WeekForecast(plans: plans, count: used.count,
+        return WeekForecast(plans: plans, extras: extras, count: used.count,
                             current: used.reduce(0, +) / Double(used.count),
                             shouldBe: pace.reduce(0, +) / Double(pace.count),
-                            start: plans.map(\.start).min()!, end: end,
+                            start: all.map(\.start).min()!, end: end,
                             poolRunsOut: poolRunsOut(plans: plans, idle: used.count - plans.count, until: end, now: now),
                             sharedReset: end.timeIntervalSince(resets.min()!) < 3600)
+    }
+
+    /// One weekly window read and projected on its own clock, or nil when its week isn't running.
+    static func plan(_ id: String, _ label: String, _ w: Window, samples: [Sample], now: Date) -> Plan? {
+        guard let reset = w.resetsAt, reset > now else { return nil }
+        let start = reset.addingTimeInterval(-week)
+        let elapsed = now.timeIntervalSince(start)
+        // Under a day in, a few busy hours would project as running out: pace it as a day.
+        let rate = w.percent / max(elapsed, 86_400)
+        var runsOut: Date?
+        if w.percent >= 100 {
+            runsOut = now
+        } else if rate > 0 {
+            let t = now.addingTimeInterval((100 - w.percent) / rate)
+            if t < reset { runsOut = t }
+        }
+        var actual: [(Date, Double)] = [(start, 0)]
+        for s in samples where s.t > start && s.t < now {
+            // A reading every 15 minutes at most keeps the chart light with several plans.
+            if let v = s.week[id], s.t.timeIntervalSince(actual.last!.0) >= 900 { actual.append((s.t, v)) }
+        }
+        actual.append((now, w.percent))
+        return Plan(id: id, label: label, start: start, reset: reset, current: w.percent,
+                    rate: rate, runsOut: runsOut, actual: actual)
     }
 
     /// Spends every plan's combined pace from whichever plan has the most room
